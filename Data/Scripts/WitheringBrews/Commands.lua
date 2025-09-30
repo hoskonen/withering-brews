@@ -1,0 +1,2 @@
+-- (Intentionally empty for now, since we’re using only CCommands and '#')
+-- If later you want KCDUtils.Command again, we’ll reintroduce here, not in Core.lua.

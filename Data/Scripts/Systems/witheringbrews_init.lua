@@ -1,36 +1,24 @@
--- [scripts/WitheringBrews/witheringbrews_init.lua]
+-- [scripts/WitheringBrews/init.lua]
+WitheringBrews = WitheringBrews or {}
+
+-- Load modules
+Script.ReloadScript("scripts/WitheringBrews/Config.lua")
 Script.ReloadScript("scripts/WitheringBrews/Core.lua")
+Script.ReloadScript("scripts/WitheringBrews/Events.lua")
+Script.ReloadScript("scripts/WitheringBrews/Cohorts.lua")
+-- Commands.lua intentionally omitted for now (we’re using CCommands + #)
 
--- Always bind raw System listeners (UIAction path is universal)
-if UIAction and UIAction.RegisterEventSystemListener then
-    UIAction.RegisterEventSystemListener(WitheringBrews, "System", "OnGameplayStarted", "OnGameplayStarted")
-    UIAction.RegisterEventSystemListener(WitheringBrews, "System", "OnHide", "OnHide")
-    UIAction.RegisterEventSystemListener(WitheringBrews, "System", "OnShow", "OnShow")
-    System.LogAlways("[WitheringBrews/init] UIAction system listeners bound")
-end
+-- Bind *all* events in one place
+WitheringBrews.Events.BindAll()
 
--- (Optional) KCDUtils helpers if present (pure bonus)
-if KCDUtils and KCDUtils.Events then
-    KCDUtils.Events.RegisterOnGameplayStarted(WitheringBrews)
-    KCDUtils.Events.SubscribeSystemEvent(WitheringBrews, "OnHide")
-    KCDUtils.Events.SubscribeSystemEvent(WitheringBrews, "OnShow")
-    System.LogAlways("[WitheringBrews/init] KCDUtils event helpers bound")
-end
+-- Handy CCommands (single source of truth)
+System.AddCCommand("wb_ping", "WitheringBrews_Cmd_Ping()", "WB: ping")
+System.AddCCommand("wb_db_test", "WitheringBrews_Cmd_DbTest()", "WB: DB smoke test")
+-- [scripts/WitheringBrews/init.lua] (after existing System.AddCCommand lines)
+System.AddCCommand("wb_db_put", "WitheringBrews_Cmd_DbPut(%1,%2)", "WB: DB put key value")
+System.AddCCommand("wb_db_get", "WitheringBrews_Cmd_DbGet(%1)", "WB: DB get key")
+-- Add near your other CCommands:
+System.AddCCommand("wb_diag_ui", "WitheringBrews_Cmd_UiDiag()", "WB: print UIAction capabilities")
 
--- Also bind ItemTransfer + Inventory now so we see the signals later
-if UIAction then
-    if UIAction.RegisterEventMovieListener then
-        UIAction.RegisterEventMovieListener(WitheringBrews, "ItemTransfer", "OnOpened", "OnItemTransferOpened")
-        UIAction.RegisterEventMovieListener(WitheringBrews, "ItemTransfer", "OnClosed", "OnItemTransferClosed")
-    end
-    if UIAction.RegisterFSCommandListener then
-        UIAction.RegisterFSCommandListener(WitheringBrews, "ItemTransfer", "onOpened", "OnItemTransferOpened")
-        UIAction.RegisterFSCommandListener(WitheringBrews, "ItemTransfer", "onClosed", "OnItemTransferClosed")
-    end
-    UIAction.RegisterEventSystemListener(WitheringBrews, "Inventory", "OnOpened", "OnInventoryOpened")
-    UIAction.RegisterEventSystemListener(WitheringBrews, "Inventory", "OnClosed", "OnInventoryClosed")
-    System.LogAlways("[WitheringBrews/init] ItemTransfer + Inventory listeners bound")
-end
-
--- Handshake still attaches logger/DB later when KCDUtils loads
+-- Start the KCDUtils attach (logger + DB when ready)
 WitheringBrews.Handshake(50, 100)
