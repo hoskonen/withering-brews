@@ -8,16 +8,16 @@ Script.ReloadScript("scripts/WitheringBrews/Core.lua")
 Script.ReloadScript("scripts/WitheringBrews/Events.lua")
 Script.ReloadScript("scripts/WitheringBrews/Cohorts.lua")
 
--- Bind lifecycle + ItemTransfer only
 WitheringBrews.Events.BindAll()
 
--- CCommands for quick diagnostics
 System.AddCCommand("wb_ping", "WitheringBrews_Cmd_Ping()", "WB: ping")
 System.AddCCommand("wb_db_test", "WitheringBrews_Cmd_DbTest()", "WB: DB smoke test")
--- Bootstrap commands (preview/apply/reset)
-System.AddCCommand("wb_bootstrap_preview", "WitheringBrews_Cmd_BootstrapPreview()", "WB: preview bootstrap (log-only)")
-System.AddCCommand("wb_bootstrap_apply", "WitheringBrews_Cmd_BootstrapApply()", "WB: apply bootstrap (write cohorts)")
+System.AddCCommand("wb_db_put", "WitheringBrews_Cmd_DbPut(%1,%2)", "WB: DB put key value")
+System.AddCCommand("wb_db_get", "WitheringBrews_Cmd_DbGet(%1)", "WB: DB get key")
+System.AddCCommand("wb_util_who", "WitheringBrews_Cmd_UtilWho()", "WB Util: print player entity")
+System.AddCCommand("wb_util_snap", "WitheringBrews_Cmd_UtilSnap()", "WB Util: snapshot player inventory (stub)")
+System.AddCCommand("wb_bootstrap_preview", "WitheringBrews_Cmd_BootstrapPreview()", "WB: preview bootstrap")
+System.AddCCommand("wb_bootstrap_apply", "WitheringBrews_Cmd_BootstrapApply()", "WB: apply bootstrap")
 System.AddCCommand("wb_bootstrap_reset", "WitheringBrews_Cmd_BootstrapReset()", "WB: clear bootstrap flag")
 
--- Attach KCDUtils (logger + LuaDB)
 WitheringBrews.Handshake(50, 100)

@@ -65,6 +65,9 @@ function WB:OnGameplayStarted()
     else
         LOG("DB smoke: DB not attached yet")
     end
+
+    WitheringBrews.BuildPotionIndex()
+    WitheringBrews.BootstrapIfNeeded()
 end
 
 -- --- Public stubs (filled next passes) --------------------------------------
@@ -88,38 +91,60 @@ end
 
 -- === Bootstrap (dry-run by default) ======================================
 function WitheringBrews.BootstrapIfNeeded()
-    local WB, C, D = WitheringBrews, WitheringBrews.Config or {}, WitheringBrews.Debug
+    local WB, C = WitheringBrews, WitheringBrews.Config or {}
+    local D = WitheringBrews.Debug
     local B = C.Bootstrap or {}
-    if B.enable == false then return end
+
+    local function info(s) if D and D.info then D.info(s) else System.LogAlways("[WitheringBrews] " .. s) end end
+    local function warn(s) if D and D.warn then D.warn(s) else System.LogAlways("[WitheringBrews][WARN] " .. s) end end
+
+    info("Bootstrap: enter")
+    if B.enable == false then
+        warn("Bootstrap: disabled via config"); info("Bootstrap: exit"); return
+    end
 
     local db = WB.DB or (KCDUtils and KCDUtils.DB and KCDUtils.DB.Factory and KCDUtils.DB.Factory("witheringbrews"))
     if not db then
-        (D and D.warn or System.LogAlways)("[WitheringBrews] Bootstrap: DB not available; skipping"); return
+        warn("Bootstrap: DB not available; skipping"); info("Bootstrap: exit"); return
     end
 
     local FLAG = B.db_flag or "WB_Config:migrated_v1"
-    if db:Get(FLAG) then return end -- already migrated
+    if db:Get(FLAG) then
+        info("Bootstrap: flag already set → nothing to do"); info("Bootstrap: exit"); return
+    end
 
-    -- Our own Util (no external mod)
+    -- Util presence
     local U = WitheringBrews.Util
     if not (U and U.InventorySnapshot and U.Player) then
-        (D and D.warn or System.LogAlways)("[WitheringBrews] Bootstrap: Util missing; skipping")
-        return
+        warn("Bootstrap: Util missing (Util.lua not loaded?)"); info("Bootstrap: exit"); return
     end
 
+    -- Player entity
+    local player = U.Player()
+    if not player then warn("Bootstrap: no player entity"); end
+
+    -- Build index (safe if empty)
+    if not WB._PotionIndex then WB.BuildPotionIndex() end
+    info("Bootstrap: potion index size=" ..
+        tostring(WB._PotionIndex and (next(WB._PotionIndex) and "nonzero" or "zero") or "nil"))
+
+    -- Snapshots (currently stubbed; fine)
     local maps = {}
-    if (B.affect or {}).player ~= false then maps.player = U.InventorySnapshot(U.Player()) end
-    if (B.affect or {}).stash == true then
-        -- leave stash disabled by default; we don’t have a resolver yet
-        (D and D.info or System.LogAlways)("[WitheringBrews] Bootstrap: stash disabled (no resolver)")
+    if (B.affect or {}).player ~= false then
+        maps.player = U.InventorySnapshot(player)
+        info("Bootstrap: took player snapshot (size=" ..
+            (maps.player and tostring(#(function(t)
+                local c = 0; for _ in pairs(t) do c = c + 1 end; return { c }
+            end)(maps.player)[1]) or "nil") .. ")")
     end
-
-    WB.BuildPotionIndex()
+    if (B.affect or {}).stash == true then
+        info("Bootstrap: stash requested but not implemented; skipping")
+    end
 
     local total_items, total_potions, cohorts_planned = 0, 0, 0
     local perBand = { water = 0, wine = 0, oil = 0, spirit = 0 }
-    local DAY = 24 * 60 * 60
     local dryRun = (C.DryRun ~= false)
+    local DAY = 24 * 60 * 60
     local seed_cfg = (C.Bootstrap and C.Bootstrap.seed_age_days) or {}
 
     local function tierLabel(tier) return ({ "i", "ii", "iii", "iv", "v" })[tier] or tostring(tier) end
@@ -132,16 +157,18 @@ function WitheringBrews.BootstrapIfNeeded()
         return os.time() - days * DAY
     end
 
+    -- Iterate
     for scope, m in pairs(maps) do
+        local unique = 0
         for cid, qty in pairs(m or {}) do
+            unique = unique + 1
             total_items = total_items + (tonumber(qty) or 0)
             local e = WB._PotionIndex and WB._PotionIndex[cid]
             if e then
                 total_potions = total_potions + (tonumber(qty) or 0)
                 perBand[e.band] = (perBand[e.band] or 0) + (tonumber(qty) or 0)
-
                 if dryRun then
-                    System.LogAlways(("[WitheringBrews][Bootstrap] %s: %s (tier %s) x%d → band=%s (WOULD seed)")
+                    info(("[Bootstrap] %s: %s (tier %s) x%d → band=%s (WOULD seed)")
                         :format(scope, e.family, tierLabel(e.tier), qty, e.band))
                     cohorts_planned = cohorts_planned + qty
                 else
@@ -155,19 +182,22 @@ function WitheringBrews.BootstrapIfNeeded()
                 end
             end
         end
+        info(("Bootstrap: scope=%s uniqueIds=%d"):format(scope, unique))
     end
 
-    System.LogAlways(("[WitheringBrews] Bootstrap summary: scanned=%d items, potions=%d, cohorts=%d  [water=%d wine=%d oil=%d spirit=%d]")
-        :format(total_items, total_potions, cohorts_planned, perBand.water or 0, perBand.wine or 0, perBand.oil or 0,
-            perBand.spirit or 0))
+    -- Always print a summary, even if everything is zero.
+    info(("[Bootstrap] summary: scanned=%d items, potions=%d, cohorts=%d  [water=%d wine=%d oil=%d spirit=%d] dryRun=%s")
+        :format(total_items, total_potions, cohorts_planned,
+            perBand.water or 0, perBand.wine or 0, perBand.oil or 0, perBand.spirit or 0,
+            tostring(dryRun)))
 
     if not dryRun then
         db:Set(FLAG, { t = os.time(), v = 1 })
-        System.LogAlways("[WitheringBrews] Bootstrap flag set (migration complete).")
+        info("Bootstrap: flag set (migration complete).")
     else
-        System.LogAlways(
-            "[WitheringBrews] DryRun=true → no cohorts written, no flag set. (Use wb_bootstrap_apply when ready.)")
+        info("Bootstrap: DryRun=true → no cohorts written, no flag set.")
     end
+    info("Bootstrap: exit")
 end
 
 -- --- Lookup and downgrade ------------------------------------------
@@ -192,6 +222,21 @@ function WitheringBrews.DowngradeId(family, tier)
     local nextTier = math.max(1, math.min(#fam.ids, tier - 1))
     if nextTier == tier then return nil end
     return fam.ids[nextTier]
+end
+
+-- === Potion reverse index (UUID -> {family,tier,label,band}) ===============
+function WitheringBrews.BuildPotionIndex()
+    local WB = WitheringBrews
+    local fams = (WB.Config and WB.Config.PotionFamilies) or {}
+    local idx = {}
+    for family, data in pairs(fams) do
+        local band = data.band or "water"
+        for tierIdx, id in ipairs(data.ids or {}) do
+            local label = ({ "i", "ii", "iii", "iv", "v" })[tierIdx] or tostring(tierIdx)
+            idx[id] = { family = family, tier = tierIdx, label = label, band = band }
+        end
+    end
+    WB._PotionIndex = idx
 end
 
 -- --- Optional fades (kept tiny; harmless if they fire) ----------------------
@@ -263,12 +308,12 @@ end
 
 function WitheringBrews_Cmd_BootstrapReset()
     local db = WitheringBrews.DB or
-    (KCDUtils and KCDUtils.DB and KCDUtils.DB.Factory and KCDUtils.DB.Factory("witheringbrews"))
+        (KCDUtils and KCDUtils.DB and KCDUtils.DB.Factory and KCDUtils.DB.Factory("witheringbrews"))
     if not db then
         System.LogAlways("[WitheringBrews] DB missing"); return
     end
     local flag = (WitheringBrews.Config and WitheringBrews.Config.Bootstrap and WitheringBrews.Config.Bootstrap.db_flag) or
-    "WB_Config:migrated_v1"
+        "WB_Config:migrated_v1"
     db:Del(flag)
     System.LogAlways("[WitheringBrews] Bootstrap flag cleared; next run will execute again.")
 end
