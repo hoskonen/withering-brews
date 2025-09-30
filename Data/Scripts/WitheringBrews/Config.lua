@@ -9,7 +9,7 @@ WitheringBrews.Config.PotionFamilies = {
         empty = "d7bb6617-9b14-41d2-8e59-93b7aaa08fd7",
         empty2 = "14989547-a6e3-4b9a-a2ba-923aaefa14fb"
     },
-    aquavitalis = { -- Aqua Vitalis (Alcohol=0)
+    aquavitalis = {
         band = "water",
         ids = {
             "850d28d9-9d0a-4b2e-9feb-e6c48c5f1aad", -- i
@@ -19,8 +19,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    artemisia = { -- Artemisia (Alcohol=13..20)
-        band = "wine",
+    artemisia = {
+        band = "spirit",
         ids = {
             "07016792-531f-4ef2-8c3c-ea7566326c04",
             "2a17517c-e5f3-4c9e-ad45-b9e4b171b452",
@@ -29,8 +29,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    bowman_brew = { -- Bowman's Brew (Alcohol=13..20)
-        band = "wine",
+    bowman_brew = {
+        band = "spirit",
         ids = {
             "3157d51d-7461-4fdc-9601-93bd5ed42156",
             "980ce52a-866c-4212-a80a-dfc6b53f5c40",
@@ -39,8 +39,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    bucks_blood = { -- Buck's Blood / stamina (Alcohol=0)
-        band = "water",
+    bucks_blood = {
+        band = "oil",
         ids = {
             "92c829ca-41f6-40a7-b8d9-aac5159c7a89",
             "be58eb36-bd45-45d9-8a38-5bd07ceb4258",
@@ -49,7 +49,7 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    chamomile_decoction = { -- Chamomile (Alcohol=7..12)
+    chamomile_decoction = {
         band = "wine",
         ids = {
             "5060809f-feec-4c39-b7f4-1cea5e55ab70",
@@ -59,8 +59,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    cockerel = { -- Insomnia/Cockerel (Alcohol=13..20)
-        band = "wine",
+    cockerel = {
+        band = "spirit",
         ids = {
             "c40dc516-9886-4245-8a8b-2cbb16da918d",
             "d4d378ef-0fb1-4030-880e-6b2fea8a394c",
@@ -69,7 +69,7 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    digestive = { -- Antidote (Alcohol=0)
+    digestive = {
         band = "water",
         ids = {
             "8b713d0c-9a04-4354-a53f-ffd384057fa6",
@@ -79,8 +79,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    fox = { -- Bard (Alcohol=0)
-        band = "water",
+    fox = {
+        band = "oil",
         ids = {
             "34d9f446-e5a7-4af4-858a-e96473de814f",
             "4f60ae85-28a3-45c1-9040-e11ed56edc87",
@@ -89,14 +89,14 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    lethean_water = { -- Respec (Alcohol=80)
+    lethean_water = {
         band = "spirit",
         ids = {
-            "601f9ff2-0413-40c9-b443-9695aafa71a5", -- single tier
+            "601f9ff2-0413-40c9-b443-9695aafa71a5",
         }
     },
 
-    marigold = { -- Marigold (Alcohol=0)
+    marigold = {
         band = "water",
         ids = {
             "b38c34b7-6016-4f64-9ba2-65e1ce31d4a1",
@@ -106,7 +106,7 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    nighthawk = { -- Nighthawk (Alcohol=0)
+    nighthawk = {
         band = "water",
         ids = {
             "6b955a9b-d8de-492c-a53e-a052fab4ff0a",
@@ -116,8 +116,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    painkiller = { -- Painkiller (Alcohol=13..20)
-        band = "wine",
+    painkiller = {
+        band = "spirit",
         ids = {
             "09834ed5-010e-438b-8ac0-cf60529ff383",
             "b53dc1c8-29c9-4002-878d-6b75fc10f217",
@@ -126,8 +126,8 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    saviour_schnapps = { -- Saviour Schnapps (Alcohol=7..12)
-        band = "wine", -- despite the name; values are low in this XML
+    saviour_schnapps = {
+        band = "wine",
         ids = {
             "928463d9-e21a-4f7c-b5d3-8378ed375cd1",
             "d273bcad-6b58-4eae-9d2a-800c40176cfd",
@@ -136,7 +136,7 @@ WitheringBrews.Config.PotionFamilies = {
         }
     },
 
-    padfoot = { -- Padfoot / Quickfinger (Alcohol=0)
+    padfoot = {
         band = "water",
         ids = {
             "ab25a50a-7836-47a9-acb2-5fd93684b8c5",
