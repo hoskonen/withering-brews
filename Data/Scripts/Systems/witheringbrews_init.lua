@@ -25,5 +25,8 @@ System.AddCCommand("wb_bootstrap_apply", "WitheringBrews_Cmd_BootstrapApply()", 
 System.AddCCommand("wb_bootstrap_reset", "WitheringBrews_Cmd_BootstrapReset()", "WB: clear bootstrap flag")
 System.AddCCommand("wb_loot_delta_sim", "WitheringBrews_Cmd_LootDeltaSim()", "WB: simulate loot delta (dev)")
 System.AddCCommand("wb_potions_reload", "WitheringBrews_Cmd_PotionsReload()", "WB: reload Potions.lua and rebuild index")
+System.AddCCommand("wb_potion_allow", "WitheringBrews_Cmd_PotionAllow(%1)", "WB: whitelist a classId")
+System.AddCCommand("wb_potion_block", "WitheringBrews_Cmd_PotionBlock(%1)", "WB: remove from whitelist")
+System.AddCCommand("wb_potion_list", "WitheringBrews_Cmd_PotionList()", "WB: list whitelist")
 
 WitheringBrews.Handshake(50, 100)

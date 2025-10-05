@@ -128,3 +128,34 @@ function WitheringBrews_Cmd_PotionsReload()
     WitheringBrews.BuildPotionIndex()
     System.LogAlways("[WitheringBrews] Potions reloaded and index rebuilt.")
 end
+
+function WitheringBrews_Cmd_PotionAllow(cid)
+    if not cid then
+        System.LogAlways("[WitheringBrews] usage: wb_potion_allow <classId>")
+        return
+    end
+    local C = WitheringBrews.Config; C.PotionWhitelist = C.PotionWhitelist or {}
+    C.PotionWhitelist[cid] = true
+    System.LogAlways("[WitheringBrews] whitelist + " .. cid)
+end
+
+function WitheringBrews_Cmd_PotionBlock(cid)
+    if not cid then
+        System.LogAlways("[WitheringBrews] usage: wb_potion_block <classId>")
+        return
+    end
+    local C = WitheringBrews.Config; C.PotionWhitelist = C.PotionWhitelist or {}
+    C.PotionWhitelist[cid] = nil
+    System.LogAlways("[WitheringBrews] whitelist - " .. cid)
+end
+
+function WitheringBrews_Cmd_PotionList()
+    local wl = (WitheringBrews.Config and WitheringBrews.Config.PotionWhitelist) or {}
+    local n = 0; for _ in pairs(wl) do n = n + 1 end
+    System.LogAlways("[WitheringBrews] whitelist entries: " .. n)
+    local shown = 0
+    for cid, _ in pairs(wl) do
+        System.LogAlways("  " .. cid)
+        shown = shown + 1; if shown >= 50 then break end
+    end
+end
