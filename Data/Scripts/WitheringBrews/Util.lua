@@ -77,6 +77,22 @@ function U.InventorySnapshot(entity)
     return out
 end
 
+function U.DiffCounts(before, after)
+    before, after = before or {}, after or {}
+    local added, removed = {}, {}
+    for cid, bq in pairs(before) do
+        local aq = after[cid] or 0
+        local d = aq - (bq or 0)
+        if d < 0 then removed[cid] = -d end
+    end
+    for cid, aq in pairs(after) do
+        local bq = before[cid] or 0
+        local d = aq - bq
+        if d > 0 then added[cid] = d end
+    end
+    return added, removed
+end
+
 -- --- Dev commands ----------------------------------------------------------
 function WitheringBrews_Cmd_UtilWho()
     local p = U.Player()
@@ -95,4 +111,20 @@ function WitheringBrews_Cmd_UtilSnap()
         System.LogAlways(string.format("[WitheringBrews]   %s x%d", tostring(cid), tonumber(qty) or 0))
         printed = printed + 1; if printed >= 10 then break end
     end
+end
+
+function WitheringBrews_Cmd_LootDeltaSim()
+    local WB, U = WitheringBrews, WitheringBrews.Util
+    WB.BuildPotionIndex()
+    local p = U.Player()
+    local a = U.InventorySnapshot(p)
+    -- fake “before” by subtracting a tiny amount from a few keys:
+    local before = {}
+    local cut = 0
+    for cid, qty in pairs(a) do
+        before[cid] = math.max(0, qty - 1)
+        cut = cut + 1; if cut >= 3 then break end
+    end
+    local added = U.DiffCounts(before, a)
+    System.LogAlways("[WitheringBrews] LootDeltaSim → see OnItemTransferClosed logs in real use")
 end

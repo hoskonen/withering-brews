@@ -1,12 +1,14 @@
 -- [scripts/WitheringBrews/Core.lua]
-WitheringBrews = WitheringBrews or {}
-local WB       = WitheringBrews
+WitheringBrews                     = WitheringBrews or {}
+local WB                           = WitheringBrews
 
-WB.Config      = WB.Config or { Version = "0.0.1-dev" }
-WB._registered = WB._registered or false
-WB._ready      = WB._ready or false
+WB.Config                          = WB.Config or { Version = "0.0.1-dev" }
+WB._registered                     = WB._registered or false
+WB._ready                          = WB._ready or false
 
--- --- Logging & DB -----------------------------------------------------------
+WitheringBrews._loot_open_snapshot = nil
+
+-- Logging & DB -----------------------------------------------------------
 local function LOG(m)
     if WB.Logger and WB.Logger.Warn then WB.Logger:Warn(m) else System.LogAlways("[WitheringBrews] " .. m) end
 end
@@ -43,7 +45,7 @@ function WB.Handshake(maxTries, delayMs)
     Script.SetTimer(delayMs, tick)
 end
 
--- --- Lifecycle --------------------------------------------------------------
+-- Lifecycle
 function WB:OnGameplayStarted()
     if WB._ready then return end
     if not WB._registered and KCDUtils and KCDUtils.RegisterMod then
@@ -70,7 +72,7 @@ function WB:OnGameplayStarted()
     WitheringBrews.BootstrapIfNeeded()
 end
 
--- --- Public stubs (filled next passes) --------------------------------------
+-- Public stubs (filled next passes) --------------------------------------
 function WB.RegisterNewStacks(ctx) LOG("RegisterNewStacks (stub)") end
 
 function WB.AgeAndDowngrade() LOG("AgeAndDowngrade (stub)") end
@@ -81,12 +83,49 @@ end
 
 -- --- ItemTransfer (primary anchor) ------------------------------------------
 function WB:OnItemTransferOpened(...)
-    LOG("ItemTransfer opened (EL)")
+    System.LogAlways("[WitheringBrews] ItemTransfer opened (EL)")
+    local U = self.Util
+    self.BuildPotionIndex()
+    self._loot_open_snapshot = U and U.InventorySnapshot and
+    U.InventorySnapshot(U.Util and U.Util.Player and U.Util.Player() or nil) or {}
+    System.LogAlways(string.format("[WitheringBrews] LootOpen snapshot: kinds=%d",
+        (function(t)
+            local c = 0; for _ in pairs(t or {}) do c = c + 1 end; return c
+        end)(self._loot_open_snapshot)))
 end
 
 function WB:OnItemTransferClosed(...)
-    LOG("ItemTransfer closed (EL) → (next) delta & cohorts")
-    -- NEXT: snapshot-after, compute delta, WB.RegisterNewStacks({ source="loot", added=... })
+    System.LogAlways("[WitheringBrews] ItemTransfer closed (EL) → diff + cohorts")
+    local U, D = self.Util, self.Debug
+    if not self._loot_open_snapshot then
+        if D and D.warn then D.warn("No open snapshot; skipping diff") end
+        return
+    end
+    local after = U and U.InventorySnapshot and U.InventorySnapshot(U.Player and U.Player() or nil) or {}
+    local added, removed = U.DiffCounts(self._loot_open_snapshot, after)
+    self._loot_open_snapshot = nil
+
+    local idx = self._PotionIndex or {}
+    local totalAdded = 0
+    for cid, qty in pairs(added) do
+        totalAdded = totalAdded + qty
+        local e = idx[cid]
+        if e then
+            -- Dry-run: only log; when enabled, push to cohorts
+            System.LogAlways(string.format(
+                "[WitheringBrews] Loot delta: POTION %s (family=%s tier=%s band=%s) +%d (WOULD seed)",
+                cid, e.family, ({ "i", "ii", "iii", "iv", "v" })[e.tier] or e.tier, e.band, qty))
+            if self.Config and self.Config.DryRun == false and self.CohortsAdd then
+                for i = 1, qty do self.CohortsAdd(cid, 1, os.time(), "loot") end
+            end
+        else
+            System.LogAlways(string.format("[WitheringBrews] Loot delta: %s +%d (ignored; not a potion)", cid, qty))
+        end
+    end
+    System.LogAlways(string.format("[WitheringBrews] Loot delta summary: addedKinds=%d addedTotal=%d",
+        (function(t)
+            local c = 0; for _ in pairs(t) do c = c + 1 end; return c
+        end)(added), totalAdded))
 end
 
 -- === Bootstrap (dry-run by default) ======================================

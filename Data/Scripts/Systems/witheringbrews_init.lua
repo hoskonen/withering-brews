@@ -2,6 +2,7 @@
 WitheringBrews = WitheringBrews or {}
 
 Script.ReloadScript("scripts/WitheringBrews/Config.lua")
+Script.ReloadScript("scripts/WitheringBrews/Potions.lua")
 Script.ReloadScript("scripts/WitheringBrews/Debug.lua")
 Script.ReloadScript("scripts/WitheringBrews/Util.lua")
 Script.ReloadScript("scripts/WitheringBrews/Core.lua")
@@ -22,5 +23,7 @@ System.AddCCommand("wb_scan_potions", "WitheringBrews_Cmd_ScanPotions()", "WB: l
 System.AddCCommand("wb_bootstrap_preview", "WitheringBrews_Cmd_BootstrapPreview()", "WB: preview bootstrap (log-only)")
 System.AddCCommand("wb_bootstrap_apply", "WitheringBrews_Cmd_BootstrapApply()", "WB: apply bootstrap (write cohorts)")
 System.AddCCommand("wb_bootstrap_reset", "WitheringBrews_Cmd_BootstrapReset()", "WB: clear bootstrap flag")
+System.AddCCommand("wb_loot_delta_sim", "WitheringBrews_Cmd_LootDeltaSim()", "WB: simulate loot delta (dev)")
+System.AddCCommand("wb_potions_reload", "WitheringBrews_Cmd_PotionsReload()", "WB: reload Potions.lua and rebuild index")
 
 WitheringBrews.Handshake(50, 100)

@@ -122,3 +122,9 @@ function WitheringBrews_Cmd_ScanPotions()
     end
     if printed == 0 then System.LogAlways("[WitheringBrews]  (no potions matched current families)") end
 end
+
+function WitheringBrews_Cmd_PotionsReload()
+    Script.ReloadScript("scripts/WitheringBrews/Potions.lua")
+    WitheringBrews.BuildPotionIndex()
+    System.LogAlways("[WitheringBrews] Potions reloaded and index rebuilt.")
+end
