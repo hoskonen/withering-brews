@@ -110,4 +110,13 @@ C.PotionWhitelist         = C.PotionWhitelist or {
     ["e730436c-53f6-4041-bdd1-3f4826f15975"] = true,
     ["cc2060b0-b588-4a54-9a73-293a8a4f2ff6"] = true,
     ["a881243c-ea11-4d4b-a7e4-0b2105c79e28"] = true,
+
+    -- fevertonic
+    ["f57b55ad-b964-4555-b564-726ab821670e"] = true,
+
+    -- embrocation
+    ["567fc1b1-1424-4784-9da8-5104e2e7354d"] = true,
+    ["5cd3c6f7-ddb8-4475-870d-895d604c1d98"] = true,
+    ["0e6f3e1b-961a-447e-ba58-17901f70896f"] = true,
+    ["9536b229-2454-48cd-83a2-2f6292e18044"] = true,
 }

@@ -139,4 +139,21 @@ C.PotionFamilies = C.PotionFamilies or {
             "a881243c-ea11-4d4b-a7e4-0b2105c79e28",
         },
     },
+
+    fevertonic = {
+        band = "wine",
+        ids  = {
+            "f57b55ad-b964-4555-b564-726ab821670e",
+        },
+    },
+
+    embrocation = {
+        band = "oil",
+        ids  = {
+            "567fc1b1-1424-4784-9da8-5104e2e7354d",
+            "5cd3c6f7-ddb8-4475-870d-895d604c1d98",
+            "0e6f3e1b-961a-447e-ba58-17901f70896f",
+            "9536b229-2454-48cd-83a2-2f6292e18044",
+        },
+    },
 }

@@ -28,5 +28,7 @@ System.AddCCommand("wb_potions_reload", "WitheringBrews_Cmd_PotionsReload()", "W
 System.AddCCommand("wb_potion_allow", "WitheringBrews_Cmd_PotionAllow(%1)", "WB: whitelist a classId")
 System.AddCCommand("wb_potion_block", "WitheringBrews_Cmd_PotionBlock(%1)", "WB: remove from whitelist")
 System.AddCCommand("wb_potion_list", "WitheringBrews_Cmd_PotionList()", "WB: list whitelist")
+System.AddCCommand("wb_whitelist_from_families", "WitheringBrews_Cmd_WhitelistFromFamilies()",
+    "WB: fill whitelist from Potions.lua")
 
 WitheringBrews.Handshake(50, 100)

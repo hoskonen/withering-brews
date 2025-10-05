@@ -159,3 +159,17 @@ function WitheringBrews_Cmd_PotionList()
         shown = shown + 1; if shown >= 50 then break end
     end
 end
+
+function WitheringBrews_Cmd_WhitelistFromFamilies()
+    local C = WitheringBrews.Config
+    C.PotionWhitelist = C.PotionWhitelist or {}
+    local fams = C.PotionFamilies or {}
+    local n = 0
+    for _, data in pairs(fams) do
+        for _, id in ipairs(data.ids or {}) do
+            C.PotionWhitelist[id] = true
+            n = n + 1
+        end
+    end
+    System.LogAlways(("[WitheringBrews] Whitelist populated from families: %d ids"):format(n))
+end
