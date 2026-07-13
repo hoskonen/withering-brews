@@ -22,6 +22,7 @@ end
 
 -- --- KCDUtils handshake (attach logger + DB) --------------------------------
 function WB.Handshake(maxTries, delayMs)
+    WB._handshakeCalls = (WB._handshakeCalls or 0) + 1
     if WB._registered then return end
     maxTries, delayMs = maxTries or 50, delayMs or 100
     local tries = 0
@@ -32,6 +33,7 @@ function WB.Handshake(maxTries, delayMs)
             WB._registered = true
             ensureDB(); LOG(("WitheringBrews registered v%s"):format(WB.Config.Version))
             -- replay once in case gameplay already started before attach
+            WB._handshakeReplayCalls = (WB._handshakeReplayCalls or 0) + 1
             WB:OnGameplayStarted()
             return
         end
@@ -47,6 +49,7 @@ end
 
 -- Lifecycle
 function WB:OnGameplayStarted()
+    WB._gameplayStartedCalls = (WB._gameplayStartedCalls or 0) + 1
     if WB._ready then return end
     if not WB._registered and KCDUtils and KCDUtils.RegisterMod then
         local mod = KCDUtils.RegisterMod({ Name = "witheringbrews" })
@@ -83,6 +86,7 @@ end
 
 -- --- ItemTransfer (primary anchor) ------------------------------------------
 function WB:OnItemTransferOpened(...)
+    WB._itemTransferOpenedCalls = (WB._itemTransferOpenedCalls or 0) + 1
     System.LogAlways("[WitheringBrews] ItemTransfer opened (EL)")
     local U = self.Util
     self.BuildPotionIndex()
@@ -95,6 +99,7 @@ function WB:OnItemTransferOpened(...)
 end
 
 function WB:OnItemTransferClosed(...)
+    WB._itemTransferClosedCalls = (WB._itemTransferClosedCalls or 0) + 1
     System.LogAlways("[WitheringBrews] ItemTransfer closed (EL) → diff + cohorts")
     local U, D = self.Util, self.Debug
     if not self._loot_open_snapshot then

@@ -120,3 +120,15 @@ C.PotionWhitelist         = C.PotionWhitelist or {
     ["0e6f3e1b-961a-447e-ba58-17901f70896f"] = true,
     ["9536b229-2454-48cd-83a2-2f6292e18044"] = true,
 }
+
+-- explicit development helpers (no automatic gameplay effects)
+C.Dev                     = C.Dev or {}
+C.Dev.allow_spawn_commands = (C.Dev.allow_spawn_commands ~= false)
+C.Dev.max_spawn_quantity   = C.Dev.max_spawn_quantity or 20
+C.Dev.spawn_health         = C.Dev.spawn_health or 1.0
+C.Dev.test_families        = C.Dev.test_families or {
+    "marigold",          -- water
+    "saviour_schnapps", -- wine
+    "embrocation",      -- oil
+    "artemisia",        -- spirit
+}

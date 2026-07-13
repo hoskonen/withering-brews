@@ -8,11 +8,20 @@ Script.ReloadScript("scripts/WitheringBrews/Util.lua")
 Script.ReloadScript("scripts/WitheringBrews/Core.lua")
 Script.ReloadScript("scripts/WitheringBrews/Events.lua")
 Script.ReloadScript("scripts/WitheringBrews/Cohorts.lua")
+Script.ReloadScript("scripts/WitheringBrews/Dev.lua")
 Script.ReloadScript("scripts/WitheringBrews/Commands.lua") -- NEW: handlers centralized
 
 WitheringBrews.Events.BindAll()
 
 -- CCommands (stays here; handlers now live in Commands.lua)
+System.AddCCommand("wb_help", "WitheringBrews_Cmd_Help()", "WB: list development commands")
+System.AddCCommand("wb_status", "WitheringBrews_Cmd_Status()", "WB: print runtime status")
+System.AddCCommand("wb_validate", "WitheringBrews_Cmd_Validate()", "WB: validate potion data")
+System.AddCCommand("wb_time", "WitheringBrews_Cmd_Time()", "WB: print game and system time")
+System.AddCCommand("wb_ui_diag", "WitheringBrews_Cmd_UiDiag()", "WB: print UI listener APIs")
+System.AddCCommand("wb_spawn", "WitheringBrews_Cmd_SpawnPotion(%%)", "WB: spawn <family> [tier] [quantity]")
+System.AddCCommand("wb_spawn_testset", "WitheringBrews_Cmd_SpawnTestSet(%%)",
+    "WB: spawn one test family per decay band")
 System.AddCCommand("wb_ping", "WitheringBrews_Cmd_Ping()", "WB: ping")
 System.AddCCommand("wb_db_test", "WitheringBrews_Cmd_DbTest()", "WB: DB smoke test")
 System.AddCCommand("wb_db_put", "WitheringBrews_Cmd_DbPut(%1,%2)", "WB: DB put key value")

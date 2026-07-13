@@ -173,3 +173,47 @@ function WitheringBrews_Cmd_WhitelistFromFamilies()
     end
     System.LogAlways(("[WitheringBrews] Whitelist populated from families: %d ids"):format(n))
 end
+
+-- --- Foundation diagnostics / development helpers --------------------------
+local function dev()
+    return WitheringBrews and WitheringBrews.Dev or nil
+end
+
+function WitheringBrews_Cmd_Help()
+    local Dv = dev()
+    if Dv and Dv.PrintHelp then Dv.PrintHelp() else System.LogAlways("[WitheringBrews] Dev.lua missing") end
+end
+
+function WitheringBrews_Cmd_Status()
+    local Dv = dev()
+    if Dv and Dv.PrintStatus then Dv.PrintStatus() else System.LogAlways("[WitheringBrews] Dev.lua missing") end
+end
+
+function WitheringBrews_Cmd_Validate()
+    local Dv = dev()
+    if Dv and Dv.Validate then Dv.Validate() else System.LogAlways("[WitheringBrews] Dev.lua missing") end
+end
+
+function WitheringBrews_Cmd_Time()
+    local Dv = dev()
+    if Dv and Dv.PrintTime then Dv.PrintTime() else System.LogAlways("[WitheringBrews] Dev.lua missing") end
+end
+
+function WitheringBrews_Cmd_SpawnPotion(family, tier, quantity)
+    local Dv = dev()
+    if Dv and Dv.SpawnPotion then
+        Dv.SpawnPotion(family, tier, quantity)
+    else
+        System.LogAlways("[WitheringBrews] Dev.lua missing")
+    end
+end
+
+function WitheringBrews_Cmd_SpawnTestSet(tier, quantity)
+    local Dv = dev()
+    if Dv and Dv.SpawnTestSet then
+        Dv.SpawnTestSet(tier, quantity)
+    else
+        System.LogAlways("[WitheringBrews] Dev.lua missing")
+    end
+end
+

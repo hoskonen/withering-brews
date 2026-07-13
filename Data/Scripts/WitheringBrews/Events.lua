@@ -20,6 +20,7 @@ local function bind_el(movie, eventName, fnName)
 end
 
 function EV.BindAll()
+    EV._bindAllCalls = (EV._bindAllCalls or 0) + 1
     -- Lifecycle
     if UIAction and UIAction.RegisterEventSystemListener then
         UIAction.RegisterEventSystemListener(WB, "System", "OnGameplayStarted", "OnGameplayStarted")
