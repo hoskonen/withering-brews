@@ -1,15 +1,17 @@
 -- [scripts/WitheringBrews/init.lua]
 WitheringBrews = WitheringBrews or {}
 
-Script.ReloadScript("scripts/WitheringBrews/Config.lua")
-Script.ReloadScript("scripts/WitheringBrews/Potions.lua")
-Script.ReloadScript("scripts/WitheringBrews/Debug.lua")
-Script.ReloadScript("scripts/WitheringBrews/Util.lua")
-Script.ReloadScript("scripts/WitheringBrews/Core.lua")
-Script.ReloadScript("scripts/WitheringBrews/Events.lua")
-Script.ReloadScript("scripts/WitheringBrews/Cohorts.lua")
-Script.ReloadScript("scripts/WitheringBrews/Dev.lua")
-Script.ReloadScript("scripts/WitheringBrews/Commands.lua") -- NEW: handlers centralized
+System.LogAlways("[WitheringBrews] init loading")
+
+Script.ReloadScript("Scripts/WitheringBrews/Config.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Potions.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Debug.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Util.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Core.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Events.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Cohorts.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Dev.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Commands.lua") -- NEW: handlers centralized
 
 WitheringBrews.Events.BindAll()
 

@@ -139,6 +139,16 @@ function WitheringBrews.BootstrapIfNeeded()
     local D = WitheringBrews.Debug
     local B = C.Bootstrap or {}
 
+    local function countKeys(t)
+        local count = 0
+
+        for _ in pairs(t or {}) do
+            count = count + 1
+        end
+
+        return count
+    end
+
     local function info(s) if D and D.info then D.info(s) else System.LogAlways("[WitheringBrews] " .. s) end end
     local function warn(s) if D and D.warn then D.warn(s) else System.LogAlways("[WitheringBrews][WARN] " .. s) end end
 
@@ -165,7 +175,12 @@ function WitheringBrews.BootstrapIfNeeded()
 
     -- Player entity
     local player = U.Player()
-    if not player then warn("Bootstrap: no player entity"); end
+    
+    if not player then
+        warn("Bootstrap: no player entity; skipping")
+        info("Bootstrap: exit")
+        return
+    end
 
     -- Build index (safe if empty)
     if not WB._PotionIndex then WB.BuildPotionIndex() end
@@ -174,16 +189,18 @@ function WitheringBrews.BootstrapIfNeeded()
 
     -- Snapshots (currently stubbed; fine)
     local maps = {}
+
     if (B.affect or {}).player ~= false then
         maps.player = U.InventorySnapshot(player)
-        info("Bootstrap: took player snapshot (size=" ..
-            (maps.player and tostring(#(function(t)
-                local c = 0; for _ in pairs(t) do c = c + 1 end; return { c }
-            end)(maps.player)[1]) or "nil") .. ")")
+
+        info(("Bootstrap: took player snapshot (size=%d)")
+            :format(countKeys(maps.player)))
     end
-    if (B.affect or {}).stash == true then
-        info("Bootstrap: stash requested but not implemented; skipping")
-    end
+
+
+    -- if (B.affect or {}).stash == true then
+    --     info("Bootstrap: stash requested but not implemented; skipping")
+    -- end
 
     local total_items, total_potions, cohorts_planned = 0, 0, 0
     local perBand = { water = 0, wine = 0, oil = 0, spirit = 0 }
