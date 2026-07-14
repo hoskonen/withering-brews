@@ -309,22 +309,65 @@ function Dev.SpawnPotion(familyArg, tierArg, quantityArg)
     end
 
     local health = tonumber(devConfig.spawn_health) or 1.0
-    local ok, result = pcall(inventory.CreateItem, inventory, classId, health, quantity)
-    if not ok then
-        err("CreateItem raised an error: " .. tostring(result))
-        return false
+    local target = before + quantity
+    local current = before
+    local attempts = 0
+    local maxAttempts = quantity + 5
+
+    while current < target and attempts < maxAttempts do
+        attempts = attempts + 1
+
+        local remaining = target - current
+        local ok, result = pcall(
+            inventory.CreateItem,
+            inventory,
+            classId,
+            health,
+            remaining
+        )
+
+        if not ok then
+            err("CreateItem raised an error: " .. tostring(result))
+            return false
+        end
+
+        local nextCount = getInventoryCount(inventory, classId)
+        if nextCount == nil then
+            err("CreateItem returned, but the inventory count could not be read")
+            return false
+        end
+
+        if nextCount <= current then
+            err(string.format(
+                "CreateItem made no progress: family=%s tier=%d id=%s return=%s current=%d target=%d",
+                family,
+                tier,
+                classId,
+                tostring(result),
+                current,
+                target
+            ))
+            return false
+        end
+
+        current = nextCount
     end
 
-    local after = getInventoryCount(inventory, classId)
-    if after == nil then
-        err("CreateItem returned, but the post-spawn inventory count could not be read")
-        return false
-    end
+    local after = current
 
     local added = after - before
-    if added <= 0 then
-        err(string.format("CreateItem did not increase inventory: family=%s tier=%d id=%s return=%s before=%d after=%d",
-            family, tier, classId, tostring(result), before, after))
+
+    if added ~= quantity then
+        err(string.format(
+            "Spawn quantity mismatch: family=%s tier=%d requested=%d added=%d before=%d after=%d attempts=%d",
+            family,
+            tier,
+            quantity,
+            added,
+            before,
+            after,
+            attempts
+        ))
         return false
     end
 
