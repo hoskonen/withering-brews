@@ -50,29 +50,70 @@ end
 -- Lifecycle
 function WB:OnGameplayStarted()
     WB._gameplayStartedCalls = (WB._gameplayStartedCalls or 0) + 1
-    if WB._ready then return end
-    if not WB._registered and KCDUtils and KCDUtils.RegisterMod then
+
+    local firstInitialization = not WB._ready
+
+    -- Process-level registration
+    if not WB._registered then
+        if not (KCDUtils and KCDUtils.RegisterMod) then
+            LOG("OnGameplayStarted: KCDUtils unavailable; initialization deferred")
+            return
+        end
+
         local mod = KCDUtils.RegisterMod({ Name = "witheringbrews" })
+        if not mod then
+            LOG("OnGameplayStarted: KCDUtils registration failed; initialization deferred")
+            return
+        end
+
         WB.Logger = mod.Logger
         WB._registered = true
-        ensureDB()
     end
-    WB._ready = true
-    LOG(("OnGameplayStarted → ready (v%s)"):format(self.Config.Version or "?"))
 
-    -- DB smoke
+    -- Save-session dependencies
     local db = ensureDB()
-    if db then
-        db:Set("WB_Config:ping", { t = os.time(), note = "hello-db" })
-        LOG("DB smoke: read " .. (db:Get("WB_Config:ping") and "OK" or "nil"))
-        db:Del("WB_Config:ping")
-        LOG("DB smoke: delete " .. (db:Get("WB_Config:ping") == nil and "OK" or "FAILED"))
-    else
-        LOG("DB smoke: DB not attached yet")
+    if not db then
+        LOG("OnGameplayStarted: DB unavailable; initialization deferred")
+        return
     end
 
-    WitheringBrews.BuildPotionIndex()
-    WitheringBrews.BootstrapIfNeeded()
+    local player = self.Util and self.Util.Player and self.Util.Player()
+    if not player then
+        LOG("OnGameplayStarted: player unavailable; initialization deferred")
+        return
+    end
+
+    -- Run the DB smoke test only once per game process.
+    if firstInitialization then
+        db:Set("WB_Config:ping", {
+            t = os.time(),
+            note = "hello-db",
+        })
+
+        LOG("DB smoke: read " ..
+            (db:Get("WB_Config:ping") and "OK" or "nil"))
+
+        db:Del("WB_Config:ping")
+
+        LOG("DB smoke: delete " ..
+            (db:Get("WB_Config:ping") == nil and "OK" or "FAILED"))
+    end
+
+    -- Must not survive an in-process save load.
+    self._loot_open_snapshot = nil
+
+    self.BuildPotionIndex()
+    self.BootstrapIfNeeded()
+
+    -- Mark ready only after successful save-session initialization.
+    WB._ready = true
+
+    if firstInitialization then
+        LOG(("OnGameplayStarted → ready (v%s)")
+            :format(self.Config.Version or "?"))
+    else
+        LOG("OnGameplayStarted → save session reinitialized")
+    end
 end
 
 -- Public stubs (filled next passes) --------------------------------------
