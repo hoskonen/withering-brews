@@ -11,7 +11,17 @@ local function ensureDB()
 end
 
 local function K_Stacks(tpl) return "WB_Stacks:" .. tostring(tpl) end
-local function now() return os.time() end
+local function now()
+    if WB.Clock and type(WB.Clock.Now) == "function" then
+        local value = WB.Clock.Now()
+
+        if type(value) == "number" then
+            return value
+        end
+    end
+
+    return nil
+end
 
 function WB.CohortsGet(tpl)
     local db = ensureDB(); local list = db and db:Get(K_Stacks(tpl)); return list or {}
@@ -23,10 +33,34 @@ end
 
 function WB.CohortsAdd(tpl, qty, created_at, source)
     qty = tonumber(qty) or 1
+
+    local created = tonumber(created_at) or now()
+
+    if type(created) ~= "number" then
+        LOG(("CohortsAdd aborted: world clock unavailable tpl=%s")
+            :format(tostring(tpl)))
+        return false
+    end
+
     local list = WB.CohortsGet(tpl)
-    table.insert(list, { qty = qty, created_at = created_at or now(), source = source or "unknown" })
+
+    table.insert(list, {
+        qty = qty,
+        created_at = created,
+        source = source or "unknown",
+    })
+
     WB.CohortsSet(tpl, list)
-    LOG(("CohortsAdd tpl=%s qty=%d source=%s"):format(tostring(tpl), qty, tostring(source)))
+
+    LOG(("CohortsAdd tpl=%s qty=%d created_at=%d source=%s")
+        :format(
+            tostring(tpl),
+            qty,
+            created,
+            tostring(source)
+        ))
+
+    return true
 end
 
 function WB.CohortsTotalQty(tpl)
@@ -38,20 +72,79 @@ function WB_CohAdd(tpl, qty, ageDays)
     if not tpl then
         System.LogAlways("[WitheringBrews] usage: # WB_CohAdd(\"<tpl>\", <qty>, <ageDays_optional>)"); return
     end
-    local created = now(); if ageDays then created = created - math.floor((tonumber(ageDays) or 0) * 86400) end
-    WB.CohortsAdd(tpl, tonumber(qty) or 1, created, "console#")
-    System.LogAlways(("[WitheringBrews] WB_CohAdd OK → tpl=%s total=%d"):format(tpl, WB.CohortsTotalQty(tpl)))
+    local created = now()
+
+    if type(created) ~= "number" then
+        System.LogAlways(
+            "[WitheringBrews] WB_CohAdd aborted: world clock unavailable"
+        )
+        return
+    end
+
+    if ageDays then
+        created = created -
+            math.floor((tonumber(ageDays) or 0) * 86400)
+    end
+
+    local added = WB.CohortsAdd(
+        tpl,
+        tonumber(qty) or 1,
+        created,
+        "console#"
+    )
+
+    if not added then
+        return
+    end
+
+    System.LogAlways(
+        ("[WitheringBrews] WB_CohAdd OK → tpl=%s total=%d")
+            :format(tpl, WB.CohortsTotalQty(tpl))
+    )
 end
 
 function WB_CohList(tpl)
     if not tpl then
         System.LogAlways("[WitheringBrews] usage: # WB_CohList(\"<tpl>\")"); return
     end
-    local list = WB.CohortsGet(tpl); System.LogAlways(("[WitheringBrews] WB_CohList tpl=%s count=%d"):format(tpl, #list))
-    local t = now(); for i, c in ipairs(list) do
-        local d = (t - (c.created_at or t)) / 86400
-        System.LogAlways(("[WitheringBrews]   [%02d] qty=%d age=%.1f d src=%s"):format(i, c.qty or 0, d,
-            tostring(c.source or "?")))
+    local list = WB.CohortsGet(tpl)
+
+    System.LogAlways(
+        ("[WitheringBrews] WB_CohList tpl=%s count=%d")
+            :format(tpl, #list)
+    )
+
+    local t = now()
+
+    if type(t) ~= "number" then
+        System.LogAlways(
+            "[WitheringBrews] WB_CohList aborted: world clock unavailable"
+        )
+        return
+    end
+
+    for i, c in ipairs(list) do
+        local created = tonumber(c.created_at)
+
+        if created then
+            local ageDays = (t - created) / 86400
+
+            System.LogAlways(
+                ("[WitheringBrews]   [%02d] qty=%d created_at=%d age=%.1f d src=%s")
+                    :format(
+                        i,
+                        c.qty or 0,
+                        created,
+                        ageDays,
+                        tostring(c.source or "?")
+                    )
+            )
+        else
+            System.LogAlways(
+                ("[WitheringBrews]   [%02d] INVALID: missing created_at")
+                    :format(i)
+            )
+        end
     end
 end
 

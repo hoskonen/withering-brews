@@ -83,14 +83,8 @@ local function normalizeTier(value)
 end
 
 function Dev.GetWorldTime()
-    if KCDUtils and KCDUtils.Calendar and type(KCDUtils.Calendar.GetWorldTime) == "function" then
-        local ok, value = pcall(KCDUtils.Calendar.GetWorldTime)
-        if ok and type(value) == "number" then return value, "KCDUtils.Calendar" end
-    end
-
-    if Calendar and type(Calendar.GetWorldTime) == "function" then
-        local ok, value = pcall(Calendar.GetWorldTime)
-        if ok and type(value) == "number" then return value, "Calendar" end
+    if WB.Clock and type(WB.Clock.Now) == "function" then
+        return WB.Clock.Now()
     end
 
     return nil, "unavailable"

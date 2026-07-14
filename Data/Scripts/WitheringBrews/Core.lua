@@ -20,6 +20,18 @@ local function ensureDB()
     return WB.DB
 end
 
+local function getWorldTime()
+    if WB.Clock and type(WB.Clock.Now) == "function" then
+        local value = WB.Clock.Now()
+
+        if type(value) == "number" then
+            return math.floor(value)
+        end
+    end
+
+    return nil
+end
+
 -- --- KCDUtils handshake (attach logger + DB) --------------------------------
 function WB.Handshake(maxTries, delayMs)
     WB._handshakeCalls = (WB._handshakeCalls or 0) + 1
@@ -164,16 +176,37 @@ end
 
 -- --- ItemTransfer (primary anchor) ------------------------------------------
 function WB:OnItemTransferOpened(...)
-    WB._itemTransferOpenedCalls = (WB._itemTransferOpenedCalls or 0) + 1
-    System.LogAlways("[WitheringBrews] ItemTransfer opened (EL)")
+    WB._itemTransferOpenedCalls =
+        (WB._itemTransferOpenedCalls or 0) + 1
+
+    System.LogAlways(
+        "[WitheringBrews] ItemTransfer opened (EL)"
+    )
+
     local U = self.Util
+
     self.BuildPotionIndex()
-    self._loot_open_snapshot = U and U.InventorySnapshot and
-    U.InventorySnapshot(U.Util and U.Util.Player and U.Util.Player() or nil) or {}
-    System.LogAlways(string.format("[WitheringBrews] LootOpen snapshot: kinds=%d",
+
+    self._loot_open_snapshot =
+        U
+        and U.InventorySnapshot
+        and U.InventorySnapshot(
+            U.Player and U.Player() or nil
+        )
+        or {}
+
+    System.LogAlways(string.format(
+        "[WitheringBrews] LootOpen snapshot: kinds=%d",
         (function(t)
-            local c = 0; for _ in pairs(t or {}) do c = c + 1 end; return c
-        end)(self._loot_open_snapshot)))
+            local count = 0
+
+            for _ in pairs(t or {}) do
+                count = count + 1
+            end
+
+            return count
+        end)(self._loot_open_snapshot)
+    ))
 end
 
 function WB:OnItemTransferClosed(...)
@@ -189,20 +222,64 @@ function WB:OnItemTransferClosed(...)
     self._loot_open_snapshot = nil
 
     local totalAdded = 0
+    local dryRun = not (self.Config and self.Config.DryRun == false)
+    local acquiredAt = nil
+
+    if not dryRun then
+        acquiredAt = getWorldTime()
+
+        if type(acquiredAt) ~= "number" then
+            System.LogAlways(
+                "[WitheringBrews][WARN] ItemTransfer cohort writes skipped: world clock unavailable"
+            )
+        end
+    end
 
     for cid, qty in pairs(added) do
         totalAdded = totalAdded + qty
+
         local e = self.GetTrackedPotion(cid)
+
         if e then
-            -- Dry-run: only log; when enabled, push to cohorts
+            local seedStatus
+
+            if dryRun then
+                seedStatus = "WOULD seed"
+            elseif type(acquiredAt) == "number" then
+                seedStatus = "seed"
+            else
+                seedStatus = "SKIP seed; world clock unavailable"
+            end
+
             System.LogAlways(string.format(
-                "[WitheringBrews] Loot delta: POTION %s (family=%s tier=%s band=%s) +%d (WOULD seed)",
-                cid, e.family, ({ "i", "ii", "iii", "iv", "v" })[e.tier] or e.tier, e.band, qty))
-            if self.Config and self.Config.DryRun == false and self.CohortsAdd then
-                for i = 1, qty do self.CohortsAdd(cid, 1, os.time(), "loot") end
+                "[WitheringBrews] Loot delta: POTION %s (family=%s tier=%s band=%s) +%d (%s)",
+                cid,
+                e.family,
+                ({ "i", "ii", "iii", "iv", "v" })[e.tier] or e.tier,
+                e.band,
+                qty,
+                seedStatus
+            ))
+
+            if not dryRun
+                and type(acquiredAt) == "number"
+                and self.CohortsAdd
+            then
+                for i = 1, qty do
+                    self.CohortsAdd(
+                        cid,
+                        1,
+                        acquiredAt,
+                        "loot"
+                    )
+                end
             end
         else
-            System.LogAlways(string.format("[WitheringBrews] Loot delta: %s +%d (ignored; not tracked)", cid, qty))
+            System.LogAlways(string.format(
+                "[WitheringBrews] Loot delta: %s +%d (ignored; not tracked)",
+                cid,
+                qty
+            ))
         end
     end
     System.LogAlways(string.format("[WitheringBrews] Loot delta summary: addedKinds=%d addedTotal=%d",
@@ -285,15 +362,33 @@ function WitheringBrews.BootstrapIfNeeded()
     local dryRun = (C.DryRun ~= false)
     local DAY = 24 * 60 * 60
     local seed_cfg = (C.Bootstrap and C.Bootstrap.seed_age_days) or {}
+    local bootstrapNow = nil
+
+    if not dryRun then
+        bootstrapNow = getWorldTime()
+
+        if type(bootstrapNow) ~= "number" then
+            warn("Bootstrap: world clock unavailable; refusing cohort writes")
+            info("Bootstrap: exit")
+            return
+        end
+    end
 
     local function tierLabel(tier) return ({ "i", "ii", "iii", "iv", "v" })[tier] or tostring(tier) end
     local function seed_created_at(band, tlabel)
         local bandCfg = seed_cfg[band] or seed_cfg["water"] or {}
         local rng = bandCfg[tlabel] or { 0, 1 }
-        local lo, hi = math.floor((rng[1] or 0)), math.floor((rng[2] or 0))
-        if hi < lo then hi = lo end
-        local days = lo + math.floor(math.random() * (hi - lo + 1))
-        return os.time() - days * DAY
+        local lo = math.floor(rng[1] or 0)
+        local hi = math.floor(rng[2] or 0)
+
+        if hi < lo then
+            hi = lo
+        end
+
+        local days =
+            lo + math.floor(math.random() * (hi - lo + 1))
+
+        return bootstrapNow - days * DAY
     end
 
     -- Iterate
@@ -341,7 +436,11 @@ function WitheringBrews.BootstrapIfNeeded()
             tostring(dryRun)))
 
     if not dryRun then
-        db:Set(FLAG, { t = os.time(), v = 1 })
+        db:Set(FLAG, {
+            t = bootstrapNow,
+            time_source = "world",
+            v = 1,
+        })
         info("Bootstrap: flag set (migration complete).")
     else
         info("Bootstrap: DryRun=true → no cohorts written, no flag set.")
