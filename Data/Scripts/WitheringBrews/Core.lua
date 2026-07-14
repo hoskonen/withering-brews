@@ -125,6 +125,43 @@ function WB.Tick(ctx)
     WB.RegisterNewStacks(ctx); WB.AgeAndDowngrade()
 end
 
+function WB.GetTrackedPotion(classId)
+    if type(classId) ~= "string" then
+        return nil
+    end
+
+    -- Normally built during save initialization, but keep this helper robust
+    -- when called manually during development.
+    if not WB._PotionIndex and type(WB.BuildPotionIndex) == "function" then
+        WB.BuildPotionIndex()
+    end
+
+    local entry = WB._PotionIndex and WB._PotionIndex[classId]
+    if not entry then
+        return nil
+    end
+
+    local config = WB.Config or {}
+    local trackMode = config.TrackMode
+
+    if trackMode == "families" then
+        return entry
+    end
+
+    if trackMode == "whitelist" then
+        local whitelist = config.PotionWhitelist or {}
+
+        if whitelist[classId] == true then
+            return entry
+        end
+
+        return nil
+    end
+
+    -- Invalid configuration should fail closed.
+    return nil
+end
+
 -- --- ItemTransfer (primary anchor) ------------------------------------------
 function WB:OnItemTransferOpened(...)
     WB._itemTransferOpenedCalls = (WB._itemTransferOpenedCalls or 0) + 1
@@ -151,11 +188,11 @@ function WB:OnItemTransferClosed(...)
     local added, removed = U.DiffCounts(self._loot_open_snapshot, after)
     self._loot_open_snapshot = nil
 
-    local idx = self._PotionIndex or {}
     local totalAdded = 0
+
     for cid, qty in pairs(added) do
         totalAdded = totalAdded + qty
-        local e = idx[cid]
+        local e = self.GetTrackedPotion(cid)
         if e then
             -- Dry-run: only log; when enabled, push to cohorts
             System.LogAlways(string.format(
@@ -165,7 +202,7 @@ function WB:OnItemTransferClosed(...)
                 for i = 1, qty do self.CohortsAdd(cid, 1, os.time(), "loot") end
             end
         else
-            System.LogAlways(string.format("[WitheringBrews] Loot delta: %s +%d (ignored; not a potion)", cid, qty))
+            System.LogAlways(string.format("[WitheringBrews] Loot delta: %s +%d (ignored; not tracked)", cid, qty))
         end
     end
     System.LogAlways(string.format("[WitheringBrews] Loot delta summary: addedKinds=%d addedTotal=%d",
@@ -268,7 +305,7 @@ function WitheringBrews.BootstrapIfNeeded()
             for cid, qty in pairs(m or {}) do
                 unique = unique + 1
                 total_items = total_items + (tonumber(qty) or 0)
-                local e = WB._PotionIndex and WB._PotionIndex[cid]
+                local e = WB.GetTrackedPotion(cid)
                 if e then
                     matched_ids     = matched_ids + 1
                     matched_qty     = matched_qty + (tonumber(qty) or 0)

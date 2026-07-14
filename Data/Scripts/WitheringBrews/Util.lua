@@ -20,14 +20,7 @@ end
 
 -- --- Potion check (uses reverse index built in Core) -----------------------
 function U.IsPotionId(classId)
-    if type(classId) ~= "string" then return false end
-    local C = WitheringBrews.Config or {}
-    if C.TrackMode == "whitelist" then
-        local wl = C.PotionWhitelist or {}
-        return wl[classId] == true
-    end
-    local idx = WitheringBrews._PotionIndex
-    return idx and idx[classId] ~= nil
+    return WB.GetTrackedPotion(classId) ~= nil
 end
 
 -- --- Inventory snapshot: { classId -> qty } -------------------------------

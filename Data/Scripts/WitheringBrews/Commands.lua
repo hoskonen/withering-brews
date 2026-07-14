@@ -106,10 +106,11 @@ end
 
 function WitheringBrews_Cmd_ScanPotions()
     local snap = U and U.InventorySnapshot and U.InventorySnapshot(U.Player()) or {}
-    WB.BuildPotionIndex(); local idx = WB._PotionIndex or {}
+    WB.BuildPotionIndex()
     local byFam, total = {}, 0
+
     for cid, qty in pairs(snap) do
-        local e = idx[cid]
+        local e = WB.GetTrackedPotion(cid)
         if e then
             byFam[e.family] = (byFam[e.family] or 0) + (tonumber(qty) or 0); total = total + (tonumber(qty) or 0)
         end
