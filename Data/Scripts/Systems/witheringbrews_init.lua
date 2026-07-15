@@ -42,5 +42,10 @@ System.AddCCommand("wb_potion_block", "WitheringBrews_Cmd_PotionBlock(%1)", "WB:
 System.AddCCommand("wb_potion_list", "WitheringBrews_Cmd_PotionList()", "WB: list whitelist")
 System.AddCCommand("wb_whitelist_from_families", "WitheringBrews_Cmd_WhitelistFromFamilies()",
     "WB: fill whitelist from Potions.lua")
+System.AddCCommand(
+    "wb_coh_validate",
+    "WitheringBrews_Cmd_CohValidate()",
+    "WB: validate player potion cohorts (read-only)"
+)
 
 WitheringBrews.Handshake(50, 100)

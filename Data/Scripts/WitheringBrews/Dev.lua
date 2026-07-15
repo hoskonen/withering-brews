@@ -112,6 +112,7 @@ function Dev.PrintHelp()
     log("  wb_scan_potions                      - scan current inventory for supported potion UUIDs")
     log("  wb_util_snap                         - print an inventory snapshot summary")
     log("  wb_db_test                           - run LuaDB write/read/delete smoke test")
+    log("  wb_coh_validate                      - compare player potions with saved cohorts")
     log("Spawn commands mutate inventory only; they do not create or alter cohorts.")
 end
 

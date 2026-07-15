@@ -222,6 +222,17 @@ function WitheringBrews_Cmd_WhitelistFromFamilies()
     System.LogAlways(("[WitheringBrews] Whitelist populated from families: %d ids"):format(n))
 end
 
+function WitheringBrews_Cmd_CohValidate()
+    if type(WB.CohortsValidatePlayer) ~= "function" then
+        System.LogAlways(
+            "[WitheringBrews] Cohort validator unavailable"
+        )
+        return
+    end
+
+    WB.CohortsValidatePlayer()
+end
+
 -- --- Foundation diagnostics / development helpers --------------------------
 local function dev()
     return WitheringBrews and WitheringBrews.Dev or nil
