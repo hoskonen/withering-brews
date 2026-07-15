@@ -1,4 +1,4 @@
-# Withering Brews — Patch 2 Handover
+# Withering Brews
 
 ## Project
 
