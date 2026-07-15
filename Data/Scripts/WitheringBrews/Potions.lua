@@ -1,8 +1,12 @@
 -- WitheringBrews: Potions (from Veteran Potions XML)
 -- Tier order: { i=base, ii=medium, iii=high, iv=best }
 
+WitheringBrews = WitheringBrews or {}
+WitheringBrews.Config = WitheringBrews.Config or {}
+
 local C = WitheringBrews.Config
-C.PotionFamilies = C.PotionFamilies or {
+
+C.PotionFamilies = {
     aquavitalis = {
         band = "water",
         ids  = {
@@ -157,3 +161,6 @@ C.PotionFamilies = C.PotionFamilies or {
         },
     },
 }
+
+WitheringBrews._potionsLoadCount =
+    (WitheringBrews._potionsLoadCount or 0) + 1

@@ -125,9 +125,56 @@ function WitheringBrews_Cmd_ScanPotions()
 end
 
 function WitheringBrews_Cmd_PotionsReload()
-    Script.ReloadScript("scripts/WitheringBrews/Potions.lua")
+    local path =
+        "Scripts/WitheringBrews/Potions.lua"
+
+    local beforeCount =
+        tonumber(WitheringBrews._potionsLoadCount) or 0
+
+    local unloadOk, unloadErr = pcall(
+        Script.UnloadScript,
+        path
+    )
+
+    if not unloadOk then
+        System.LogAlways(
+            "[WitheringBrews] Potions reload FAILED during unload: "
+            .. tostring(unloadErr)
+        )
+        return
+    end
+
+    local reloadOk, reloadErr = pcall(
+        Script.ReloadScript,
+        path
+    )
+
+    if not reloadOk then
+        System.LogAlways(
+            "[WitheringBrews] Potions reload FAILED during reload: "
+            .. tostring(reloadErr)
+        )
+        return
+    end
+
+    local afterCount =
+        tonumber(WitheringBrews._potionsLoadCount) or 0
+
+    if afterCount <= beforeCount then
+        System.LogAlways(
+            "[WitheringBrews] Potions reload FAILED: "
+            .. "Potions.lua did not execute"
+        )
+        return
+    end
+
     WitheringBrews.BuildPotionIndex()
-    System.LogAlways("[WitheringBrews] Potions reloaded and index rebuilt.")
+
+    System.LogAlways(
+        ("[WitheringBrews] Potions reloaded and index rebuilt "
+            .. "(loadCount=%d)")
+            :format(afterCount)
+    )
 end
 
 function WitheringBrews_Cmd_PotionAllow(cid)
