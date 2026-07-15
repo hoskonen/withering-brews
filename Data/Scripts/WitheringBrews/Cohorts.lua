@@ -1,4 +1,3 @@
-Script.ReloadScript("scripts/WitheringBrews/Core.lua")
 local WB = WitheringBrews
 local function LOG(m) if WB.Logger and WB.Logger.Warn then WB.Logger:Warn(m) else System.LogAlways("[WitheringBrews] " ..
         m) end end
