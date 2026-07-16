@@ -22,6 +22,13 @@ local function now()
     return nil
 end
 
+local function isFiniteNumber(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
 function WB.CohortsGet(tpl)
     local db = ensureDB(); local list = db and db:Get(K_Stacks(tpl)); return list or {}
 end
@@ -31,33 +38,148 @@ function WB.CohortsSet(tpl, list)
 end
 
 function WB.CohortsAdd(tpl, qty, created_at, source)
-    qty = tonumber(qty) or 1
+    local normalizedQty = tonumber(qty)
 
-    local created = tonumber(created_at) or now()
+    if normalizedQty == nil then
+        normalizedQty = 1
+    end
 
-    if type(created) ~= "number" then
-        LOG(("CohortsAdd aborted: world clock unavailable tpl=%s")
-            :format(tostring(tpl)))
+    if not isFiniteNumber(normalizedQty)
+        or normalizedQty < 1
+        or math.floor(normalizedQty) ~= normalizedQty
+    then
+        LOG(
+            ("CohortsAdd aborted: qty must be a positive integer tpl=%s qty=%s")
+                :format(
+                    tostring(tpl),
+                    tostring(qty)
+                )
+        )
+
         return false
+    end
+
+    local created
+
+    if created_at == nil then
+        created = now()
+    else
+        created = tonumber(created_at)
+    end
+
+    if not isFiniteNumber(created) then
+        LOG(
+            ("CohortsAdd aborted: invalid or unavailable timestamp tpl=%s created_at=%s")
+                :format(
+                    tostring(tpl),
+                    tostring(created_at)
+                )
+        )
+
+        return false
+    end
+
+    local normalizedSource = source
+
+    if type(normalizedSource) ~= "string"
+        or normalizedSource == ""
+    then
+        normalizedSource = "unknown"
     end
 
     local list = WB.CohortsGet(tpl)
 
+    if type(list) ~= "table" then
+        LOG(
+            ("CohortsAdd aborted: stored cohort list is not a table tpl=%s")
+                :format(tostring(tpl))
+        )
+
+        return false
+    end
+
+    local matchingIndexes = {}
+    local mergedQty = normalizedQty
+
+    for index, row in ipairs(list) do
+        if type(row) == "table" then
+            local rowQty = tonumber(row.qty)
+            local rowCreated = row.created_at
+            local rowSource = row.source
+
+            local validRowQty =
+                isFiniteNumber(rowQty)
+                and rowQty >= 1
+                and math.floor(rowQty) == rowQty
+
+            local exactMatch =
+                validRowQty
+                and isFiniteNumber(rowCreated)
+                and type(rowSource) == "string"
+                and rowSource ~= ""
+                and rowCreated == created
+                and rowSource == normalizedSource
+
+            if exactMatch then
+                matchingIndexes[#matchingIndexes + 1] =
+                    index
+
+                mergedQty =
+                    mergedQty + rowQty
+            end
+        end
+    end
+
+    if #matchingIndexes > 0 then
+        local primaryIndex =
+            matchingIndexes[1]
+
+        list[primaryIndex].qty =
+            mergedQty
+
+        -- Remove additional pre-existing exact duplicates.
+        -- Iterate backwards so earlier indexes do not shift.
+        for index = #matchingIndexes, 2, -1 do
+            table.remove(
+                list,
+                matchingIndexes[index]
+            )
+        end
+
+        WB.CohortsSet(tpl, list)
+
+        LOG(
+            ("CohortsAdd merged tpl=%s addedQty=%d rowQty=%d created_at=%s source=%s compactedRows=%d")
+                :format(
+                    tostring(tpl),
+                    normalizedQty,
+                    mergedQty,
+                    tostring(created),
+                    normalizedSource,
+                    #matchingIndexes - 1
+                )
+        )
+
+        return true
+    end
+
     table.insert(list, {
-        qty = qty,
+        qty = normalizedQty,
         created_at = created,
-        source = source or "unknown",
+        source = normalizedSource,
     })
 
     WB.CohortsSet(tpl, list)
 
-    LOG(("CohortsAdd tpl=%s qty=%d created_at=%d source=%s")
-        :format(
-            tostring(tpl),
-            qty,
-            created,
-            tostring(source)
-        ))
+    LOG(
+        ("CohortsAdd appended tpl=%s qty=%d created_at=%s source=%s")
+            :format(
+                tostring(tpl),
+                normalizedQty,
+                tostring(created),
+                normalizedSource
+            )
+    )
 
     return true
 end
@@ -72,13 +194,6 @@ local function validationLog(message)
     System.LogAlways(
         "[WitheringBrews/Cohorts] " .. tostring(message)
     )
-end
-
-local function isFiniteNumber(value)
-    return type(value) == "number"
-        and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
 end
 
 local function isBootstrapSource(value)
