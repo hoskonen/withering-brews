@@ -510,7 +510,463 @@ function WB.CohortsValidatePlayer()
     return true, summary
 end
 
+-- Read-only player reconciliation preview -----------------------------------
+
+local function reconciliationLog(message)
+    System.LogAlways(
+        "[WitheringBrews/Reconcile] "
+        .. tostring(message)
+    )
+end
+
+function WB.CohortsPreviewPlayerReconciliation()
+    local db = ensureDB()
+
+    if not db then
+        reconciliationLog(
+            "Preview aborted: LuaDB unavailable"
+        )
+        return false
+    end
+
+    local U = WB.Util
+
+    if not (
+        U
+        and type(U.Player) == "function"
+        and type(U.InventorySnapshot) == "function"
+    ) then
+        reconciliationLog(
+            "Preview aborted: inventory utilities unavailable"
+        )
+        return false
+    end
+
+    local playerEntity = U.Player()
+
+    if not playerEntity then
+        reconciliationLog(
+            "Preview aborted: player unavailable"
+        )
+        return false
+    end
+
+    local currentTime = now()
+
+    if not isFiniteNumber(currentTime) then
+        reconciliationLog(
+            "Preview aborted: world clock unavailable"
+        )
+        return false
+    end
+
+    if type(WB.BuildPotionIndex) == "function" then
+        WB.BuildPotionIndex()
+    end
+
+    local snapshot =
+        U.InventorySnapshot(playerEntity)
+
+    if type(snapshot) ~= "table" then
+        reconciliationLog(
+            "Preview aborted: inventory snapshot failed"
+        )
+        return false
+    end
+
+    local entries = {}
+
+    for classId in pairs(WB._PotionIndex or {}) do
+        local potion =
+            type(WB.GetTrackedPotion) == "function"
+            and WB.GetTrackedPotion(classId)
+            or nil
+
+        if potion then
+            entries[#entries + 1] = {
+                classId = classId,
+                potion = potion,
+            }
+        end
+    end
+
+    table.sort(entries, function(a, b)
+        local familyA =
+            tostring(a.potion.family or "")
+
+        local familyB =
+            tostring(b.potion.family or "")
+
+        if familyA ~= familyB then
+            return familyA < familyB
+        end
+
+        local tierA =
+            tonumber(a.potion.tier) or 0
+
+        local tierB =
+            tonumber(b.potion.tier) or 0
+
+        if tierA ~= tierB then
+            return tierA < tierB
+        end
+
+        return a.classId < b.classId
+    end)
+
+    local summary = {
+        trackedIds = #entries,
+        mismatchedIds = 0,
+        blockedIds = 0,
+        missingQty = 0,
+        excessQty = 0,
+        additionRows = 0,
+        removalActions = 0,
+    }
+
+    local plans = {}
+
+    for _, item in ipairs(entries) do
+        local classId = item.classId
+        local potion = item.potion
+
+        local inventoryQty =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(snapshot[classId]) or 0
+                )
+            )
+
+        local rowCount = 0
+        local cohortQty = 0
+        local validRows = {}
+        local blockedReasons = {}
+
+        local readOk, rawList = pcall(
+            db.Get,
+            db,
+            K_Stacks(classId)
+        )
+
+        if not readOk then
+            blockedReasons[#blockedReasons + 1] =
+                "DB read failed: "
+                .. tostring(rawList)
+        elseif rawList ~= nil
+            and type(rawList) ~= "table"
+        then
+            blockedReasons[#blockedReasons + 1] =
+                "cohort list is "
+                .. type(rawList)
+                .. ", expected table"
+        elseif type(rawList) == "table" then
+            for rowKey, row in pairs(rawList) do
+                rowCount = rowCount + 1
+
+                local reasons = {}
+
+                if type(rowKey) ~= "number"
+                    or rowKey < 1
+                    or math.floor(rowKey) ~= rowKey
+                then
+                    reasons[#reasons + 1] =
+                        "invalid array key"
+                end
+
+                if type(row) ~= "table" then
+                    reasons[#reasons + 1] =
+                        "row is not a table"
+                else
+                    local qty = row.qty
+                    local createdAt =
+                        row.created_at
+
+                    local source =
+                        row.source
+
+                    if not isFiniteNumber(qty)
+                        or qty < 1
+                        or math.floor(qty) ~= qty
+                    then
+                        reasons[#reasons + 1] =
+                            "qty must be a positive integer"
+                    end
+
+                    if not isFiniteNumber(createdAt) then
+                        reasons[#reasons + 1] =
+                            "created_at must be numeric"
+                    elseif createdAt < 0
+                        and not isBootstrapSource(source)
+                    then
+                        reasons[#reasons + 1] =
+                            "negative created_at "
+                            .. "requires bootstrap source"
+                    elseif createdAt > currentTime then
+                        reasons[#reasons + 1] =
+                            "created_at is in the future"
+                    end
+
+                    if type(source) ~= "string"
+                        or source == ""
+                    then
+                        reasons[#reasons + 1] =
+                            "source is missing"
+                    end
+
+                    if #reasons == 0 then
+                        cohortQty =
+                            cohortQty + qty
+
+                        validRows[#validRows + 1] = {
+                            index = rowKey,
+                            qty = qty,
+                            created_at = createdAt,
+                            source = source,
+                        }
+                    end
+                end
+
+                if #reasons > 0 then
+                    blockedReasons[#blockedReasons + 1] =
+                        ("row %s: %s")
+                            :format(
+                                tostring(rowKey),
+                                table.concat(
+                                    reasons,
+                                    ", "
+                                )
+                            )
+                end
+            end
+        end
+
+        local active =
+            inventoryQty > 0
+            or rowCount > 0
+
+        if #blockedReasons > 0 then
+            summary.blockedIds =
+                summary.blockedIds + 1
+
+            reconciliationLog(
+                ("%s tier=%s id=%s BLOCKED")
+                    :format(
+                        tostring(
+                            potion.family or "?"
+                        ),
+                        tostring(
+                            potion.label
+                            or potion.tier
+                            or "?"
+                        ),
+                        classId
+                    )
+            )
+
+            reconciliationLog(
+                ("  inventory=%d validCohorts=%d rows=%d")
+                    :format(
+                        inventoryQty,
+                        cohortQty,
+                        rowCount
+                    )
+            )
+
+            for _, reason in ipairs(blockedReasons) do
+                reconciliationLog(
+                    "  " .. reason
+                )
+            end
+        elseif active then
+            local missingQty =
+                math.max(
+                    0,
+                    inventoryQty - cohortQty
+                )
+
+            local excessQty =
+                math.max(
+                    0,
+                    cohortQty - inventoryQty
+                )
+
+            if missingQty > 0
+                or excessQty > 0
+            then
+                summary.mismatchedIds =
+                    summary.mismatchedIds + 1
+
+                summary.missingQty =
+                    summary.missingQty + missingQty
+
+                summary.excessQty =
+                    summary.excessQty + excessQty
+
+                local plan = {
+                    classId = classId,
+                    family = potion.family,
+                    tier = potion.tier,
+                    inventoryQty = inventoryQty,
+                    cohortQty = cohortQty,
+                    addition = nil,
+                    removals = {},
+                }
+
+                reconciliationLog(
+                    ("%s tier=%s id=%s")
+                        :format(
+                            tostring(
+                                potion.family or "?"
+                            ),
+                            tostring(
+                                potion.label
+                                or potion.tier
+                                or "?"
+                            ),
+                            classId
+                        )
+                )
+
+                reconciliationLog(
+                    ("  inventory=%d cohorts=%d missing=%d excess=%d")
+                        :format(
+                            inventoryQty,
+                            cohortQty,
+                            missingQty,
+                            excessQty
+                        )
+                )
+
+                if missingQty > 0 then
+                    plan.addition = {
+                        qty = missingQty,
+                        created_at = currentTime,
+                        source = "reconcile:player",
+                    }
+
+                    summary.additionRows =
+                        summary.additionRows + 1
+
+                    reconciliationLog(
+                        ("  WOULD ADD qty=%d created_at=%d source=reconcile:player")
+                            :format(
+                                missingQty,
+                                currentTime
+                            )
+                    )
+                end
+
+                if excessQty > 0 then
+                    table.sort(
+                        validRows,
+                        function(a, b)
+                            if a.created_at
+                                ~= b.created_at
+                            then
+                                return a.created_at
+                                    < b.created_at
+                            end
+
+                            return a.index < b.index
+                        end
+                    )
+
+                    local remaining =
+                        excessQty
+
+                    for _, row in ipairs(validRows) do
+                        if remaining <= 0 then
+                            break
+                        end
+
+                        local removeQty =
+                            math.min(
+                                row.qty,
+                                remaining
+                            )
+
+                        local keepQty =
+                            row.qty - removeQty
+
+                        local ageDays =
+                            (
+                                currentTime
+                                - row.created_at
+                            ) / 86400
+
+                        plan.removals[
+                            #plan.removals + 1
+                        ] = {
+                            index = row.index,
+                            removeQty = removeQty,
+                            originalQty = row.qty,
+                            remainingQty = keepQty,
+                            created_at =
+                                row.created_at,
+                            source = row.source,
+                        }
+
+                        summary.removalActions =
+                            summary.removalActions + 1
+
+                        reconciliationLog(
+                            ("  WOULD REMOVE row=%s qty=%d fromRowQty=%d keep=%d created_at=%s age=%.1fd source=%s")
+                                :format(
+                                    tostring(row.index),
+                                    removeQty,
+                                    row.qty,
+                                    keepQty,
+                                    tostring(
+                                        row.created_at
+                                    ),
+                                    ageDays,
+                                    tostring(row.source)
+                                )
+                        )
+
+                        remaining =
+                            remaining - removeQty
+                    end
+
+                    if remaining > 0 then
+                        reconciliationLog(
+                            ("  INTERNAL ERROR: unable to plan remaining excess qty=%d")
+                                :format(
+                                    remaining
+                                )
+                        )
+                    end
+                end
+
+                plans[#plans + 1] =
+                    plan
+            end
+        end
+    end
+
+    reconciliationLog(
+        ("Preview summary: trackedIds=%d mismatchedIds=%d blockedIds=%d missingQty=%d excessQty=%d additionRows=%d removalActions=%d writes=0")
+            :format(
+                summary.trackedIds,
+                summary.mismatchedIds,
+                summary.blockedIds,
+                summary.missingQty,
+                summary.excessQty,
+                summary.additionRows,
+                summary.removalActions
+            )
+    )
+
+    return true, summary, plans
+end
+
 -- '#' console helpers
+
+function WB_CohReconcilePreview()
+    WB.CohortsPreviewPlayerReconciliation()
+end
+
 function WB_CohAdd(tpl, qty, ageDays)
     if not tpl then
         System.LogAlways("[WitheringBrews] usage: # WB_CohAdd(\"<tpl>\", <qty>, <ageDays_optional>)"); return
