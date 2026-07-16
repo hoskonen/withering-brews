@@ -961,10 +961,682 @@ function WB.CohortsPreviewPlayerReconciliation()
     return true, summary, plans
 end
 
+-- Guarded player reconciliation writes --------------------------------------
+
+local function copyValue(value)
+    if type(value) ~= "table" then
+        return value
+    end
+
+    local result = {}
+
+    for key, child in pairs(value) do
+        result[key] = copyValue(child)
+    end
+
+    return result
+end
+
+local function valuesEqual(left, right)
+    if type(left) ~= type(right) then
+        return false
+    end
+
+    if type(left) ~= "table" then
+        return left == right
+    end
+
+    for key, value in pairs(left) do
+        if not valuesEqual(value, right[key]) then
+            return false
+        end
+    end
+
+    for key in pairs(right) do
+        if left[key] == nil then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function isDenseArray(list)
+    if type(list) ~= "table" then
+        return false
+    end
+
+    local count = 0
+    local maximumIndex = 0
+
+    for key in pairs(list) do
+        if type(key) ~= "number"
+            or key < 1
+            or math.floor(key) ~= key
+        then
+            return false
+        end
+
+        count = count + 1
+        maximumIndex = math.max(
+            maximumIndex,
+            key
+        )
+    end
+
+    return maximumIndex == count
+end
+
+local function validateStoredCohortList(list, currentTime)
+    if not isDenseArray(list) then
+        return false, 0, "cohort list is not a dense array"
+    end
+
+    local totalQty = 0
+
+    for index, row in ipairs(list) do
+        if type(row) ~= "table" then
+            return false,
+                totalQty,
+                ("row %d is not a table")
+                    :format(index)
+        end
+
+        local qty = row.qty
+        local createdAt = row.created_at
+        local source = row.source
+
+        if not isFiniteNumber(qty)
+            or qty < 1
+            or math.floor(qty) ~= qty
+        then
+            return false,
+                totalQty,
+                ("row %d has invalid qty")
+                    :format(index)
+        end
+
+        if not isFiniteNumber(createdAt) then
+            return false,
+                totalQty,
+                ("row %d has invalid created_at")
+                    :format(index)
+        end
+
+        if createdAt < 0
+            and not isBootstrapSource(source)
+        then
+            return false,
+                totalQty,
+                ("row %d has negative non-bootstrap timestamp")
+                    :format(index)
+        end
+
+        if createdAt > currentTime then
+            return false,
+                totalQty,
+                ("row %d is dated in the future")
+                    :format(index)
+        end
+
+        if type(source) ~= "string"
+            or source == ""
+        then
+            return false,
+                totalQty,
+                ("row %d has invalid source")
+                    :format(index)
+        end
+
+        totalQty = totalQty + qty
+    end
+
+    return true, totalQty, nil
+end
+
+local function addExactCohortToList(list, addition)
+    for _, row in ipairs(list) do
+        if row.created_at == addition.created_at
+            and row.source == addition.source
+        then
+            row.qty = row.qty + addition.qty
+            return "merged"
+        end
+    end
+
+    table.insert(
+        list,
+        copyValue(addition)
+    )
+
+    return "appended"
+end
+
+local function restoreCohortList(
+    db,
+    key,
+    originalList
+)
+    local writeOk, writeError = pcall(
+        db.Set,
+        db,
+        key,
+        copyValue(originalList)
+    )
+
+    if not writeOk then
+        return false,
+            "rollback write failed: "
+            .. tostring(writeError)
+    end
+
+    local readOk, restoredList = pcall(
+        db.Get,
+        db,
+        key
+    )
+
+    if not readOk then
+        return false,
+            "rollback read failed: "
+            .. tostring(restoredList)
+    end
+
+    if restoredList == nil then
+        restoredList = {}
+    end
+
+    if not valuesEqual(
+        restoredList,
+        originalList
+    ) then
+        return false,
+            "rollback read-back did not match original"
+    end
+
+    return true
+end
+
+function WB.CohortsApplyPlayerReconciliation(
+    confirmation
+)
+    if confirmation ~= "APPLY" then
+        reconciliationLog(
+            "Apply aborted: explicit confirmation required"
+        )
+
+        reconciliationLog(
+            'Use: # WB_CohReconcileApply("APPLY")'
+        )
+
+        return false
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        reconciliationLog(
+            "Apply aborted: DryRun must be false"
+        )
+
+        return false
+    end
+
+    local previewOk, previewSummary, plans =
+        WB.CohortsPreviewPlayerReconciliation()
+
+    if not previewOk then
+        reconciliationLog(
+            "Apply aborted: preview failed"
+        )
+
+        return false
+    end
+
+    local db = ensureDB()
+
+    if not db then
+        reconciliationLog(
+            "Apply aborted: LuaDB unavailable"
+        )
+
+        return false
+    end
+
+    local currentTime = now()
+
+    if not isFiniteNumber(currentTime) then
+        reconciliationLog(
+            "Apply aborted: world clock unavailable"
+        )
+
+        return false
+    end
+
+    local U = WB.Util
+    local playerEntity =
+        U
+        and U.Player
+        and U.Player()
+        or nil
+
+    if not playerEntity then
+        reconciliationLog(
+            "Apply aborted: player unavailable"
+        )
+
+        return false
+    end
+
+    -- Take a second inventory snapshot after planning.
+    -- A changed quantity invalidates that potion's plan.
+    local liveSnapshot =
+        U.InventorySnapshot(playerEntity)
+
+    if type(liveSnapshot) ~= "table" then
+        reconciliationLog(
+            "Apply aborted: live inventory snapshot failed"
+        )
+
+        return false
+    end
+
+    local summary = {
+        plannedIds = #plans,
+        appliedIds = 0,
+        skippedIds = 0,
+        failedIds = 0,
+        blockedIds =
+            previewSummary.blockedIds or 0,
+        dbWrites = 0,
+        rollbacks = 0,
+        rollbackFailures = 0,
+    }
+
+    for _, plan in ipairs(plans) do
+        local classId = plan.classId
+        local key = K_Stacks(classId)
+
+        local liveInventoryQty =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        liveSnapshot[classId]
+                    ) or 0
+                )
+            )
+
+        local skipReason = nil
+
+        if liveInventoryQty
+            ~= plan.inventoryQty
+        then
+            skipReason =
+                ("inventory changed after preview: planned=%d live=%d")
+                    :format(
+                        plan.inventoryQty,
+                        liveInventoryQty
+                    )
+        end
+
+        local readOk, currentList
+
+        if not skipReason then
+            readOk, currentList = pcall(
+                db.Get,
+                db,
+                key
+            )
+
+            if not readOk then
+                skipReason =
+                    "DB read failed: "
+                    .. tostring(currentList)
+            elseif currentList == nil then
+                currentList = {}
+            elseif type(currentList) ~= "table" then
+                skipReason =
+                    "stored cohort value is not a table"
+            end
+        end
+
+        local currentTotal = nil
+
+        if not skipReason then
+            local validList, totalQty, reason =
+                validateStoredCohortList(
+                    currentList,
+                    currentTime
+                )
+
+            if not validList then
+                skipReason =
+                    "stored cohorts changed or became invalid: "
+                    .. tostring(reason)
+            elseif totalQty ~= plan.cohortQty then
+                skipReason =
+                    ("cohort total changed after preview: planned=%d live=%d")
+                        :format(
+                            plan.cohortQty,
+                            totalQty
+                        )
+            else
+                currentTotal = totalQty
+            end
+        end
+
+        if skipReason then
+            summary.skippedIds =
+                summary.skippedIds + 1
+
+            reconciliationLog(
+                ("SKIPPED id=%s reason=%s")
+                    :format(
+                        tostring(classId),
+                        skipReason
+                    )
+            )
+        else
+            local originalList =
+                copyValue(currentList)
+
+            local workingList =
+                copyValue(currentList)
+
+            local applyError = nil
+
+            if plan.addition then
+                addExactCohortToList(
+                    workingList,
+                    plan.addition
+                )
+            end
+
+            local indexesToRemove = {}
+
+            for _, removal in ipairs(
+                plan.removals or {}
+            ) do
+                local row =
+                    workingList[removal.index]
+
+                if type(row) ~= "table" then
+                    applyError =
+                        ("planned row %s no longer exists")
+                            :format(
+                                tostring(
+                                    removal.index
+                                )
+                            )
+
+                    break
+                end
+
+                if row.qty
+                    ~= removal.originalQty
+                    or row.created_at
+                    ~= removal.created_at
+                    or row.source
+                    ~= removal.source
+                then
+                    applyError =
+                        ("planned row %s changed before apply")
+                            :format(
+                                tostring(
+                                    removal.index
+                                )
+                            )
+
+                    break
+                end
+
+                if removal.remainingQty > 0 then
+                    row.qty =
+                        removal.remainingQty
+                else
+                    indexesToRemove[
+                        #indexesToRemove + 1
+                    ] = removal.index
+                end
+            end
+
+            if not applyError then
+                table.sort(
+                    indexesToRemove,
+                    function(left, right)
+                        return left > right
+                    end
+                )
+
+                for _, index in ipairs(
+                    indexesToRemove
+                ) do
+                    table.remove(
+                        workingList,
+                        index
+                    )
+                end
+
+                local validAfter,
+                    totalAfter,
+                    validationError =
+                    validateStoredCohortList(
+                        workingList,
+                        currentTime
+                    )
+
+                if not validAfter then
+                    applyError =
+                        "planned result is invalid: "
+                        .. tostring(
+                            validationError
+                        )
+                elseif totalAfter
+                    ~= liveInventoryQty
+                then
+                    applyError =
+                        ("planned result does not match inventory: result=%d inventory=%d")
+                            :format(
+                                totalAfter,
+                                liveInventoryQty
+                            )
+                end
+            end
+
+            if applyError then
+                summary.skippedIds =
+                    summary.skippedIds + 1
+
+                reconciliationLog(
+                    ("SKIPPED id=%s reason=%s")
+                        :format(
+                            tostring(classId),
+                            applyError
+                        )
+                )
+            else
+                local writeOk, writeError =
+                    pcall(
+                        db.Set,
+                        db,
+                        key,
+                        workingList
+                    )
+
+                if writeOk then
+                    summary.dbWrites =
+                        summary.dbWrites + 1
+                end
+
+                local verifyOk = false
+                local verifyReason = nil
+
+                if not writeOk then
+                    verifyReason =
+                        "DB write failed: "
+                        .. tostring(writeError)
+                else
+                    local readBackOk,
+                        storedList =
+                        pcall(
+                            db.Get,
+                            db,
+                            key
+                        )
+
+                    if not readBackOk then
+                        verifyReason =
+                            "DB verification read failed: "
+                            .. tostring(
+                                storedList
+                            )
+                    else
+                        if storedList == nil then
+                            storedList = {}
+                        end
+
+                        local validStored,
+                            storedTotal,
+                            storedError =
+                            validateStoredCohortList(
+                                storedList,
+                                currentTime
+                            )
+
+                        if not validStored then
+                            verifyReason =
+                                "stored result is invalid: "
+                                .. tostring(
+                                    storedError
+                                )
+                        elseif storedTotal
+                            ~= liveInventoryQty
+                        then
+                            verifyReason =
+                                ("stored total mismatch: stored=%d inventory=%d")
+                                    :format(
+                                        storedTotal,
+                                        liveInventoryQty
+                                    )
+                        elseif not valuesEqual(
+                            storedList,
+                            workingList
+                        ) then
+                            verifyReason =
+                                "stored rows differ from planned rows"
+                        else
+                            verifyOk = true
+                        end
+                    end
+                end
+
+                if verifyOk then
+                    summary.appliedIds =
+                        summary.appliedIds + 1
+
+                    reconciliationLog(
+                        ("APPLIED family=%s tier=%s id=%s before=%d after=%d rowsBefore=%d rowsAfter=%d")
+                            :format(
+                                tostring(
+                                    plan.family
+                                    or "?"
+                                ),
+                                tostring(
+                                    plan.tier
+                                    or "?"
+                                ),
+                                tostring(classId),
+                                currentTotal or 0,
+                                liveInventoryQty,
+                                #originalList,
+                                #workingList
+                            )
+                    )
+                else
+                    summary.failedIds =
+                        summary.failedIds + 1
+
+                    reconciliationLog(
+                        ("FAILED id=%s reason=%s")
+                            :format(
+                                tostring(classId),
+                                tostring(
+                                    verifyReason
+                                )
+                            )
+                    )
+
+                    local rollbackOk,
+                        rollbackError =
+                        restoreCohortList(
+                            db,
+                            key,
+                            originalList
+                        )
+
+                    if rollbackOk then
+                        summary.rollbacks =
+                            summary.rollbacks + 1
+
+                        reconciliationLog(
+                            ("ROLLBACK OK id=%s")
+                                :format(
+                                    tostring(classId)
+                                )
+                        )
+                    else
+                        summary.rollbackFailures =
+                            summary.rollbackFailures
+                            + 1
+
+                        reconciliationLog(
+                            ("CRITICAL: ROLLBACK FAILED id=%s reason=%s")
+                                :format(
+                                    tostring(classId),
+                                    tostring(
+                                        rollbackError
+                                    )
+                                )
+                        )
+                    end
+                end
+            end
+        end
+    end
+
+    reconciliationLog(
+        ("Apply summary: plannedIds=%d appliedIds=%d skippedIds=%d failedIds=%d blockedIds=%d dbWrites=%d rollbacks=%d rollbackFailures=%d inventoryWrites=0")
+            :format(
+                summary.plannedIds,
+                summary.appliedIds,
+                summary.skippedIds,
+                summary.failedIds,
+                summary.blockedIds,
+                summary.dbWrites,
+                summary.rollbacks,
+                summary.rollbackFailures
+            )
+    )
+
+    local successful =
+        summary.failedIds == 0
+        and summary.rollbackFailures == 0
+
+    return successful, summary
+end
+
 -- '#' console helpers
 
 function WB_CohReconcilePreview()
-    WB.CohortsPreviewPlayerReconciliation()
+    return WB.CohortsPreviewPlayerReconciliation()
+end
+
+function WB_CohReconcileApply(confirmation)
+    return WB.CohortsApplyPlayerReconciliation(
+        confirmation
+    )
 end
 
 function WB_CohAdd(tpl, qty, ageDays)
