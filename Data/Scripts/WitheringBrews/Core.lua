@@ -265,14 +265,12 @@ function WB:OnItemTransferClosed(...)
                 and type(acquiredAt) == "number"
                 and self.CohortsAdd
             then
-                for i = 1, qty do
-                    self.CohortsAdd(
-                        cid,
-                        1,
-                        acquiredAt,
-                        "loot"
-                    )
-                end
+                self.CohortsAdd(
+                    cid,
+                    qty,
+                    acquiredAt,
+                    "loot"
+                )
             end
         else
             System.LogAlways(string.format(
