@@ -81,6 +81,11 @@ local function isFiniteNumber(value)
         and value ~= -math.huge
 end
 
+local function isBootstrapSource(value)
+    return type(value) == "string"
+        and value:sub(1, 10) == "bootstrap:"
+end
+
 function WB.CohortsValidatePlayer()
     local db = ensureDB()
 
@@ -174,6 +179,7 @@ function WB.CohortsValidatePlayer()
         invalidRows = 0,
         invalidLists = 0,
         futureRows = 0,
+        preEpochRows = 0,
     }
 
     for _, item in ipairs(entries) do
@@ -190,6 +196,7 @@ function WB.CohortsValidatePlayer()
         local rowCount = 0
         local invalidRows = 0
         local futureRows = 0
+        local preEpochRows = 0
         local invalidList = false
         local problems = {}
 
@@ -217,6 +224,7 @@ function WB.CohortsValidatePlayer()
 
                 local reasons = {}
                 local isFuture = false
+                local isPreEpoch = false
 
                 if type(rowKey) ~= "number"
                     or rowKey < 1
@@ -246,8 +254,12 @@ function WB.CohortsValidatePlayer()
                         reasons[#reasons + 1] =
                             "created_at must be numeric"
                     elseif createdAt < 0 then
-                        reasons[#reasons + 1] =
-                            "created_at is negative"
+                        if isBootstrapSource(source) then
+                            isPreEpoch = true
+                        else
+                            reasons[#reasons + 1] =
+                                "created_at is negative for non-bootstrap source"
+                        end
                     elseif createdAt > currentTime then
                         reasons[#reasons + 1] =
                             "created_at is in the future"
@@ -265,6 +277,11 @@ function WB.CohortsValidatePlayer()
                     if #reasons == 0 then
                         validCohortQty =
                             validCohortQty + qty
+
+                        if isPreEpoch then
+                            preEpochRows =
+                                preEpochRows + 1
+                        end
                     end
                 end
 
@@ -309,7 +326,7 @@ function WB.CohortsValidatePlayer()
             )
 
             validationLog(
-                ("  inventory=%d cohorts=%d rows=%d missing=%d excess=%d invalidRows=%d futureRows=%d")
+                ("  inventory=%d cohorts=%d rows=%d missing=%d excess=%d invalidRows=%d futureRows=%d preEpochRows=%d")
                     :format(
                         inventoryQty,
                         validCohortQty,
@@ -317,7 +334,8 @@ function WB.CohortsValidatePlayer()
                         missingQty,
                         excessQty,
                         invalidRows,
-                        futureRows
+                        futureRows,
+                        preEpochRows
                     )
             )
 
@@ -346,6 +364,9 @@ function WB.CohortsValidatePlayer()
 
         summary.futureRows =
             summary.futureRows + futureRows
+        
+        summary.preEpochRows =
+            summary.preEpochRows + preEpochRows
 
         if invalidList then
             summary.invalidLists =
@@ -354,7 +375,7 @@ function WB.CohortsValidatePlayer()
     end
 
     validationLog(
-        ("Validation summary: configuredIds=%d trackedIds=%d activeIds=%d inventoryQty=%d validCohortQty=%d rows=%d missingQty=%d excessQty=%d invalidRows=%d invalidLists=%d futureRows=%d writes=0")
+        ("Validation summary: configuredIds=%d trackedIds=%d activeIds=%d inventoryQty=%d validCohortQty=%d rows=%d missingQty=%d excessQty=%d invalidRows=%d invalidLists=%d futureRows=%d preEpochRows=%d writes=0")
             :format(
                 summary.configuredIds,
                 summary.trackedIds,
@@ -366,7 +387,8 @@ function WB.CohortsValidatePlayer()
                 summary.excessQty,
                 summary.invalidRows,
                 summary.invalidLists,
-                summary.futureRows
+                summary.futureRows,
+                summary.preEpochRows
             )
     )
 

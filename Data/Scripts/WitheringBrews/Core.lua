@@ -355,83 +355,261 @@ function WitheringBrews.BootstrapIfNeeded()
     --     info("Bootstrap: stash requested but not implemented; skipping")
     -- end
 
-    local total_items, total_potions, cohorts_planned = 0, 0, 0
+    local total_items, total_potions, cohort_rows_planned = 0, 0, 0
     local perBand = { water = 0, wine = 0, oil = 0, spirit = 0 }
     local dryRun = (C.DryRun ~= false)
     local DAY = 24 * 60 * 60
-    local seed_cfg = (C.Bootstrap and C.Bootstrap.seed_age_days) or {}
+    local seed_cfg =
+        (C.Bootstrap and C.Bootstrap.seed_age_days)
+        or {}
+
     local bootstrapNow = nil
 
     if not dryRun then
         bootstrapNow = getWorldTime()
 
         if type(bootstrapNow) ~= "number" then
-            warn("Bootstrap: world clock unavailable; refusing cohort writes")
+            warn(
+                "Bootstrap: world clock unavailable; "
+                .. "refusing cohort writes"
+            )
+            info("Bootstrap: exit")
+            return
+        end
+
+        if type(WB.CohortsAdd) ~= "function" then
+            warn(
+                "Bootstrap: CohortsAdd unavailable; "
+                .. "refusing cohort writes"
+            )
             info("Bootstrap: exit")
             return
         end
     end
 
-    local function tierLabel(tier) return ({ "i", "ii", "iii", "iv", "v" })[tier] or tostring(tier) end
-    local function seed_created_at(band, tlabel)
-        local bandCfg = seed_cfg[band] or seed_cfg["water"] or {}
-        local rng = bandCfg[tlabel] or { 0, 1 }
-        local lo = math.floor(rng[1] or 0)
-        local hi = math.floor(rng[2] or 0)
+    local function tierLabel(tier)
+        return ({ "i", "ii", "iii", "iv", "v" })[tier]
+            or tostring(tier)
+    end
 
-        if hi < lo then
-            hi = lo
+    local function seedAgeRange(band, tlabel)
+        local bandCfg =
+            seed_cfg[band]
+            or seed_cfg.water
+            or {}
+
+        local range =
+            bandCfg[tlabel]
+            or { 0, 1 }
+
+        local minimum =
+            math.max(
+                0,
+                math.floor(tonumber(range[1]) or 0)
+            )
+
+        local maximum =
+            math.max(
+                0,
+                math.floor(tonumber(range[2]) or minimum)
+            )
+
+        if maximum < minimum then
+            maximum = minimum
         end
 
-        local days =
-            lo + math.floor(math.random() * (hi - lo + 1))
+        return minimum, maximum
+    end
 
-        return bootstrapNow - days * DAY
+    local function buildSeedBuckets(band, tlabel, quantity)
+        local minimum, maximum =
+            seedAgeRange(band, tlabel)
+
+        local normalizedQuantity =
+            math.max(
+                0,
+                math.floor(tonumber(quantity) or 0)
+            )
+
+        local buckets = {}
+
+        for _ = 1, normalizedQuantity do
+            local ageDays =
+                minimum
+                + math.floor(
+                    math.random()
+                    * (maximum - minimum + 1)
+                )
+
+            buckets[ageDays] =
+                (buckets[ageDays] or 0) + 1
+        end
+
+        return buckets, normalizedQuantity
+    end
+
+    local function sortedBucketDays(buckets)
+        local days = {}
+
+        for ageDays in pairs(buckets or {}) do
+            days[#days + 1] = ageDays
+        end
+
+        table.sort(days)
+
+        return days
+    end
+
+    local function formatSeedBuckets(buckets, orderedDays)
+        local parts = {}
+
+        for _, ageDays in ipairs(orderedDays or {}) do
+            parts[#parts + 1] =
+                ("%dd x%d")
+                    :format(
+                        ageDays,
+                        buckets[ageDays]
+                    )
+        end
+
+        return table.concat(parts, ", ")
     end
 
     -- Iterate
     local matched_ids, matched_qty = 0, 0
 
     local okLoop, err = pcall(function()
-        for scope, m in pairs(maps) do
+        for scope, inventoryMap in pairs(maps) do
             local unique = 0
-            for cid, qty in pairs(m or {}) do
-                unique = unique + 1
-                total_items = total_items + (tonumber(qty) or 0)
-                local e = WB.GetTrackedPotion(cid)
-                if e then
-                    matched_ids     = matched_ids + 1
-                    matched_qty     = matched_qty + (tonumber(qty) or 0)
-                    total_potions   = total_potions + (tonumber(qty) or 0)
-                    perBand[e.band] = (perBand[e.band] or 0) + (tonumber(qty) or 0)
 
-                    if dryRun then
-                        info(("[Bootstrap] %s: %s (tier %s) x%d → band=%s (WOULD seed)")
-                            :format(scope, e.family, tierLabel(e.tier), qty, e.band))
-                        cohorts_planned = cohorts_planned + qty
-                    else
-                        for i = 1, qty do
-                            local created = seed_created_at(e.band, tierLabel(e.tier))
-                            if WitheringBrews.CohortsAdd then
-                                WitheringBrews.CohortsAdd(cid, 1, created, "bootstrap:" .. scope)
-                            end
-                            cohorts_planned = cohorts_planned + 1
+            for cid, rawQty in pairs(inventoryMap or {}) do
+                unique = unique + 1
+
+                local qty =
+                    math.max(
+                        0,
+                        math.floor(tonumber(rawQty) or 0)
+                    )
+
+                total_items = total_items + qty
+
+                local potion =
+                    WB.GetTrackedPotion(cid)
+
+                if potion and qty > 0 then
+                    matched_ids = matched_ids + 1
+                    matched_qty = matched_qty + qty
+                    total_potions = total_potions + qty
+
+                    perBand[potion.band] =
+                        (perBand[potion.band] or 0) + qty
+
+                    local label =
+                        tierLabel(potion.tier)
+
+                    local buckets =
+                        buildSeedBuckets(
+                            potion.band,
+                            label,
+                            qty
+                        )
+
+                    local orderedDays =
+                        sortedBucketDays(buckets)
+
+                    local rowCount =
+                        #orderedDays
+
+                    cohort_rows_planned =
+                        cohort_rows_planned + rowCount
+
+                    local action =
+                        dryRun
+                        and "WOULD seed"
+                        or "seed"
+
+                    info(
+                        ("[Bootstrap] %s: %s (tier %s) "
+                            .. "x%d → band=%s rows=%d "
+                            .. "ages=[%s] (%s)")
+                            :format(
+                                scope,
+                                potion.family,
+                                label,
+                                qty,
+                                potion.band,
+                                rowCount,
+                                formatSeedBuckets(
+                                    buckets,
+                                    orderedDays
+                                ),
+                                action
+                            )
+                    )
+
+                    if not dryRun then
+                        local source =
+                            "bootstrap:" .. scope
+
+                        for _, ageDays in ipairs(orderedDays) do
+                            local bucketQty =
+                                buckets[ageDays]
+
+                            local createdAt =
+                                bootstrapNow
+                                - ageDays * DAY
+
+                            WB.CohortsAdd(
+                                cid,
+                                bucketQty,
+                                createdAt,
+                                source
+                            )
                         end
                     end
                 end
             end
-            info(("Bootstrap: scope=%s uniqueIds=%d"):format(scope, unique))
+
+            info(
+                ("Bootstrap: scope=%s uniqueIds=%d")
+                    :format(scope, unique)
+            )
         end
     end)
+
     if not okLoop then
-        warn("Bootstrap: iteration error → " .. tostring(err))
+        warn(
+            "Bootstrap: iteration error → "
+            .. tostring(err)
+        )
+        info("Bootstrap: exit")
+        return
     end
 
-    info(("[Bootstrap] matched=%d ids (qty=%d)"):format(matched_ids, matched_qty))
-    info(("[Bootstrap] summary: scanned=%d items, potions=%d, cohorts=%d  [water=%d wine=%d oil=%d spirit=%d] dryRun=%s")
-        :format(total_items, total_potions, cohorts_planned,
-            perBand.water or 0, perBand.wine or 0, perBand.oil or 0, perBand.spirit or 0,
-            tostring(dryRun)))
+    info(
+        ("[Bootstrap] matchedIds=%d matchedQty=%d")
+            :format(
+                matched_ids,
+                matched_qty
+            )
+    )
+
+    info(
+        ("[Bootstrap] summary: scannedQty=%d "
+            .. "potionQty=%d cohortRows=%d "
+            .. "[water=%d wine=%d oil=%d spirit=%d] "
+            .. "dryRun=%s")
+            :format(
+                total_items,
+                total_potions,
+                cohort_rows_planned,
+                perBand.water or 0,
+                perBand.wine or 0,
+                perBand.oil or 0,
+                perBand.spirit or 0,
+                tostring(dryRun)
+            )
+    )
 
     if not dryRun then
         db:Set(FLAG, {
