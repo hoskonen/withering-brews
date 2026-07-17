@@ -113,6 +113,9 @@ function Dev.PrintHelp()
     log("  wb_util_snap                         - print an inventory snapshot summary")
     log("  wb_db_test                           - run LuaDB write/read/delete smoke test")
     log("  wb_coh_validate                      - compare player potions with saved cohorts")
+    log("  wb_age_selftest                      - run pure aging planner self-tests")
+    log("  wb_age_validate_rules                - validate configured aging rules and boundaries")
+    log("  wb_age_preview                       - preview current player potion aging and planned transitions")
     log("Spawn commands mutate inventory only; they do not create or alter cohorts.")
 end
 

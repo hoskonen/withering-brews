@@ -22,6 +22,36 @@ C.Bootstrap.seed_age_days = C.Bootstrap.seed_age_days or {
     spirit = { iv = { 0, 120 }, iii = { 0, 160 }, ii = { 0, 200 }, i = { 0, 240 } },
 }
 
+-- aging
+--
+-- DEVELOPMENT VALUES ONLY.
+-- These values exist to make planner behavior easy to test.
+-- Final gameplay presets will be designed later.
+C.Aging = C.Aging or {}
+
+C.Aging.profile =
+    C.Aging.profile or "development"
+
+C.Aging.terminal_policy =
+    C.Aging.terminal_policy or "keep"
+
+C.Aging.band_stage_days =
+    C.Aging.band_stage_days or {
+        water = 4,
+        wine = 8,
+        oil = 12,
+        spirit = 16,
+    }
+
+-- Lower-quality potions spend less time in one quality stage.
+C.Aging.tier_multipliers =
+    C.Aging.tier_multipliers or {
+        iv = 1.00,
+        iii = 0.75,
+        ii = 0.50,
+        i = 0.25,
+    }
+
 -- replacers (keep your values)
 C.PotionReplacers         = C.PotionReplacers or {
     empty  = "d7bb6617-9b14-41d2-8e59-93b7aaa08fd7",

@@ -45,5 +45,7 @@ System.AddCCommand("wb_whitelist_from_families", "WitheringBrews_Cmd_WhitelistFr
     "WB: fill whitelist from Potions.lua")
 System.AddCCommand("wb_coh_validate", "WitheringBrews_Cmd_CohValidate()", "WB: validate player potion cohorts (read-only)")
 System.AddCCommand("wb_age_selftest", "WitheringBrews_Cmd_AgingSelfTest()", "WB: run pure aging planner self-tests")
+System.AddCCommand("wb_age_preview", "WitheringBrews_Cmd_AgingPreview()", "WB: preview player potion aging (read-only)")
+System.AddCCommand("wb_age_validate_rules", "WitheringBrews_Cmd_AgingValidateRules()", "WB: validate configured aging rules (read-only)")
 
 WitheringBrews.Handshake(50, 100)

@@ -250,6 +250,42 @@ function WitheringBrews_Cmd_AgingSelfTest()
     aging.RunSelfTests()
 end
 
+function WitheringBrews_Cmd_AgingPreview()
+    local aging = WB.Aging
+
+    if not (
+        aging
+        and type(aging.PreviewPlayer) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging preview unavailable"
+        )
+
+        return
+    end
+
+    aging.PreviewPlayer()
+end
+
+function WitheringBrews_Cmd_AgingValidateRules()
+    local aging = WB.Aging
+
+    if not (
+        aging
+        and type(
+            aging.ValidateConfiguredRules
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging rule validator unavailable"
+        )
+
+        return
+    end
+
+    aging.ValidateConfiguredRules()
+end
+
 -- --- Foundation diagnostics / development helpers --------------------------
 local function dev()
     return WitheringBrews and WitheringBrews.Dev or nil
