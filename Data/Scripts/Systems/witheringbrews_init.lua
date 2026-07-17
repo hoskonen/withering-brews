@@ -5,6 +5,7 @@ System.LogAlways("[WitheringBrews] init loading")
 
 Script.ReloadScript("Scripts/WitheringBrews/Config.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Potions.lua")
+Script.ReloadScript("Scripts/WitheringBrews/Aging.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Debug.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Util.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Clock.lua")
@@ -42,10 +43,7 @@ System.AddCCommand("wb_potion_block", "WitheringBrews_Cmd_PotionBlock(%1)", "WB:
 System.AddCCommand("wb_potion_list", "WitheringBrews_Cmd_PotionList()", "WB: list whitelist")
 System.AddCCommand("wb_whitelist_from_families", "WitheringBrews_Cmd_WhitelistFromFamilies()",
     "WB: fill whitelist from Potions.lua")
-System.AddCCommand(
-    "wb_coh_validate",
-    "WitheringBrews_Cmd_CohValidate()",
-    "WB: validate player potion cohorts (read-only)"
-)
+System.AddCCommand("wb_coh_validate", "WitheringBrews_Cmd_CohValidate()", "WB: validate player potion cohorts (read-only)")
+System.AddCCommand("wb_age_selftest", "WitheringBrews_Cmd_AgingSelfTest()", "WB: run pure aging planner self-tests")
 
 WitheringBrews.Handshake(50, 100)

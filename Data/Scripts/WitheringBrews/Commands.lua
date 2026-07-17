@@ -233,6 +233,23 @@ function WitheringBrews_Cmd_CohValidate()
     WB.CohortsValidatePlayer()
 end
 
+function WitheringBrews_Cmd_AgingSelfTest()
+    local aging = WB.Aging
+
+    if not (
+        aging
+        and type(aging.RunSelfTests) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging self-test unavailable"
+        )
+
+        return
+    end
+
+    aging.RunSelfTests()
+end
+
 -- --- Foundation diagnostics / development helpers --------------------------
 local function dev()
     return WitheringBrews and WitheringBrews.Dev or nil
