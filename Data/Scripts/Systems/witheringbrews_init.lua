@@ -56,4 +56,10 @@ System.AddCCommand(
     "WB: verified remove/add inventory round-trip <classId> <qty> TEST"
 )
 
+System.AddCCommand(
+    "wb_age_coh_roundtrip",
+    "WitheringBrews_Cmd_AgingCohortRoundTrip(%%)",
+    "WB: verified cohort read/write round-trip <classId> TEST"
+)
+
 WitheringBrews.Handshake(50, 100)

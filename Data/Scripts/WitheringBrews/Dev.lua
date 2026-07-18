@@ -118,6 +118,7 @@ function Dev.PrintHelp()
     log("  wb_age_preview                       - preview current player potion aging and planned transitions")
     log("  wb_age_tx_preview                    - construct full aging transaction shell (read-only)")
     log("  wb_age_inv_roundtrip <id> <qty> TEST - verified inventory mutation round-trip")
+    log("  wb_age_coh_roundtrip <id> TEST      - verified cohort DB round-trip")
     log("Spawn commands mutate inventory only; they do not create or alter cohorts.")
 end
 

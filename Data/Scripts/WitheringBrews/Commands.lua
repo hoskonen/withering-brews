@@ -371,3 +371,25 @@ function WitheringBrews_Cmd_SpawnTestSet(tier, quantity)
     end
 end
 
+function WitheringBrews_Cmd_AgingCohortRoundTrip(classId, confirmation)
+    local execution = WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestCohortRoundTrip
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging cohort round-trip unavailable"
+        )
+
+        return
+    end
+
+    execution.TestCohortRoundTrip(
+        classId,
+        confirmation
+    )
+end
+

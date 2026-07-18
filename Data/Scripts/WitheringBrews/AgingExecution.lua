@@ -1,10 +1,11 @@
 -- Withering Brews: guarded aging transaction orchestration
 --
--- Patch 4, increment 2:
+-- Patch 4, increment 3:
 --   * capture and validate the complete player state;
---   * plan every original cohort exactly once;
---   * construct authoritative expected inventory and cohort states;
---   * perform no inventory or LuaDB writes.
+--   * construct authoritative expected states;
+--   * provide verified inventory add/remove primitives;
+--   * provide a guarded inventory round-trip diagnostic;
+--   * perform no aging transaction or LuaDB writes.
 
 WitheringBrews = WitheringBrews or {}
 
@@ -292,7 +293,7 @@ local function newTransaction()
     }
 end
 
-local function blockTransaction(transaction,mreason)
+local function blockTransaction(transaction, reason)
     transaction.blockedReasons[
         #transaction.blockedReasons + 1
     ] = tostring(reason)
@@ -588,6 +589,339 @@ function E.AddVerified(inventory, classId, quantity, health)
     end
 
     return true, result
+end
+
+function E.WriteCohortListVerified(classId, expectedList)
+    local result = {
+        operation = "cohort-write",
+        classId = classId,
+
+        expectedRows = nil,
+        expectedQty = nil,
+
+        beforeList = nil,
+        afterList = nil,
+
+        reason = nil,
+        cohortWrites = 0,
+    }
+
+    if type(classId) ~= "string"
+        or classId == ""
+    then
+        result.reason =
+            "class ID is missing"
+
+        return false, result
+    end
+
+    if type(expectedList) ~= "table" then
+        result.reason =
+            "expected cohort list is not a table"
+
+        return false, result
+    end
+
+    if type(WB.CohortsGet) ~= "function"
+        or type(WB.CohortsSet) ~= "function"
+    then
+        result.reason =
+            "cohort storage unavailable"
+
+        return false, result
+    end
+
+    local currentTime =
+        WB.Clock
+        and type(WB.Clock.Now) == "function"
+        and WB.Clock.Now()
+        or nil
+
+    if not isFiniteNumber(currentTime) then
+        result.reason =
+            "world clock unavailable"
+
+        return false, result
+    end
+
+    local validExpected,
+        expectedRows,
+        expectedQty,
+        expectedReason =
+        inspectCohortList(
+            expectedList,
+            currentTime
+        )
+
+    if not validExpected then
+        result.reason =
+            "expected cohort list is invalid: "
+            .. tostring(expectedReason)
+
+        return false, result
+    end
+
+    result.expectedRows = expectedRows
+    result.expectedQty = expectedQty
+
+    local beforeOk, beforeList =
+        pcall(
+            WB.CohortsGet,
+            classId
+        )
+
+    if not beforeOk then
+        result.reason =
+            "cohort read before write failed: "
+            .. tostring(beforeList)
+
+        return false, result
+    end
+
+    if type(beforeList) ~= "table" then
+        result.reason =
+            "stored cohort value before write is not a table"
+
+        return false, result
+    end
+
+    result.beforeList =
+        copyValue(beforeList)
+
+    result.cohortWrites = 1
+
+    local writeOk, writeError =
+        pcall(
+            WB.CohortsSet,
+            classId,
+            copyValue(expectedList)
+        )
+
+    local readOk, afterList =
+        pcall(
+            WB.CohortsGet,
+            classId
+        )
+
+    if not readOk then
+        result.reason =
+            "cohort read-back failed: "
+            .. tostring(afterList)
+
+        if not writeOk then
+            result.reason =
+                result.reason
+                .. "; write error: "
+                .. tostring(writeError)
+        end
+
+        return false, result
+    end
+
+    result.afterList =
+        copyValue(afterList)
+
+    if not writeOk then
+        result.reason =
+            "cohort write failed: "
+            .. tostring(writeError)
+
+        return false, result
+    end
+
+    if not valuesEqual(
+        afterList,
+        expectedList
+    ) then
+        result.reason =
+            "cohort read-back differs from expected list"
+
+        return false, result
+    end
+
+    return true, result
+end
+
+local function logCohortWriteResult(
+    label,
+    success,
+    result
+)
+    txLog(
+        ("%s success=%s id=%s expectedRows=%s expectedQty=%s writes=%d reason=%s")
+            :format(
+                tostring(label),
+                tostring(success),
+                tostring(result.classId),
+                tostring(result.expectedRows),
+                tostring(result.expectedQty),
+                tonumber(
+                    result.cohortWrites
+                ) or 0,
+                tostring(result.reason)
+            )
+    )
+end
+
+function E.TestCohortRoundTrip(classId, confirmation)
+    if confirmation ~= "TEST" then
+        txLog(
+            "Cohort round-trip aborted: explicit TEST confirmation required"
+        )
+
+        return false
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        txLog(
+            "Cohort round-trip aborted: DryRun must be false"
+        )
+
+        return false
+    end
+
+    if type(WB.BuildPotionIndex) == "function" then
+        WB.BuildPotionIndex()
+    end
+
+    local potion =
+        type(WB.GetTrackedPotion) == "function"
+        and WB.GetTrackedPotion(classId)
+        or nil
+
+    if not potion then
+        txLog(
+            "Cohort round-trip aborted: class ID is not a tracked potion"
+        )
+
+        return false
+    end
+
+    local readOk, originalList =
+        pcall(
+            WB.CohortsGet,
+            classId
+        )
+
+    if not readOk then
+        txLog(
+            "Cohort round-trip aborted: initial read failed: "
+            .. tostring(originalList)
+        )
+
+        return false
+    end
+
+    if type(originalList) ~= "table" then
+        txLog(
+            "Cohort round-trip aborted: stored value is not a table"
+        )
+
+        return false
+    end
+
+    originalList =
+        copyValue(originalList)
+
+    txLog(
+        ("Cohort round-trip BEGIN family=%s tier=%s id=%s rows=%d")
+            :format(
+                tostring(potion.family),
+                tostring(
+                    potion.label
+                    or potion.tier
+                    or "?"
+                ),
+                tostring(classId),
+                #originalList
+            )
+    )
+
+    local writeOk, writeResult =
+        E.WriteCohortListVerified(
+            classId,
+            originalList
+        )
+
+    logCohortWriteResult(
+        "COHORT WRITE",
+        writeOk,
+        writeResult
+    )
+
+    if not writeOk then
+        local compensationOk,
+            compensationResult =
+            E.WriteCohortListVerified(
+                classId,
+                originalList
+            )
+
+        logCohortWriteResult(
+            "COHORT COMPENSATE",
+            compensationOk,
+            compensationResult
+        )
+
+        if not compensationOk then
+            txLog(
+                "CRITICAL: cohort round-trip compensation failed"
+            )
+        end
+
+        return false
+    end
+
+    local finalReadOk, finalList =
+        pcall(
+            WB.CohortsGet,
+            classId
+        )
+
+    if not finalReadOk
+        or not valuesEqual(
+            finalList,
+            originalList
+        )
+    then
+        local compensationOk,
+            compensationResult =
+            E.WriteCohortListVerified(
+                classId,
+                originalList
+            )
+
+        logCohortWriteResult(
+            "COHORT COMPENSATE",
+            compensationOk,
+            compensationResult
+        )
+
+        if not compensationOk then
+            txLog(
+                "CRITICAL: cohort round-trip compensation failed"
+            )
+        end
+
+        txLog(
+            "Cohort round-trip FAILED final verification"
+        )
+
+        return false
+    end
+
+    txLog(
+        ("Cohort round-trip OK id=%s rows=%d cohortWrites=1 inventoryWrites=0")
+            :format(
+                tostring(classId),
+                #originalList
+            )
+    )
+
+    return true
 end
 
 local function logMutationResult(
@@ -926,6 +1260,193 @@ function E.TestInventoryRoundTrip(classId, quantity, confirmation)
     )
 
     return true
+end
+
+function E.RecheckPreconditions(transaction)
+    local result = {
+        valid = false,
+        reasons = {},
+
+        checkedIds = 0,
+        inventoryChecks = 0,
+        cohortChecks = 0,
+
+        currentTime = nil,
+        writes = 0,
+    }
+
+    local function block(reason)
+        result.reasons[
+            #result.reasons + 1
+        ] = tostring(reason)
+    end
+
+    if type(transaction) ~= "table" then
+        block(
+            "transaction is not a table"
+        )
+
+        return false, result
+    end
+
+    if transaction.valid ~= true then
+        block(
+            "transaction is not valid"
+        )
+
+        return false, result
+    end
+
+    if type(transaction.configuredClassIds)
+        ~= "table"
+    then
+        block(
+            "configured class IDs unavailable"
+        )
+
+        return false, result
+    end
+
+    local U = WB.Util
+
+    local playerEntity =
+        U
+        and type(U.Player) == "function"
+        and U.Player()
+        or nil
+
+    local inventory =
+        getInventory(playerEntity)
+
+    if not inventory then
+        block(
+            "player inventory unavailable"
+        )
+
+        return false, result
+    end
+
+    local currentTime =
+        WB.Clock
+        and type(WB.Clock.Now) == "function"
+        and WB.Clock.Now()
+        or nil
+
+    if not isFiniteNumber(currentTime) then
+        block(
+            "world clock unavailable"
+        )
+
+        return false, result
+    end
+
+    result.currentTime = currentTime
+
+    if not isFiniteNumber(
+        transaction.currentTime
+    ) then
+        block(
+            "transaction time is invalid"
+        )
+    elseif currentTime
+        < transaction.currentTime
+    then
+        block(
+            ("world clock moved backward: planned=%s live=%s")
+                :format(
+                    tostring(
+                        transaction.currentTime
+                    ),
+                    tostring(currentTime)
+                )
+        )
+    end
+
+    for _, classId in ipairs(
+        transaction.configuredClassIds
+    ) do
+        result.checkedIds =
+            result.checkedIds + 1
+
+        local countOk,
+            liveCount,
+            countReason =
+            getInventoryCount(
+                inventory,
+                classId
+            )
+
+        if not countOk then
+            block(
+                ("id=%s inventory recheck failed: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(countReason)
+                    )
+            )
+        else
+            result.inventoryChecks =
+                result.inventoryChecks + 1
+
+            local plannedCount =
+                transaction.inventoryBefore[
+                    classId
+                ]
+
+            if liveCount ~= plannedCount then
+                block(
+                    ("id=%s inventory changed: planned=%s live=%s")
+                        :format(
+                            tostring(classId),
+                            tostring(plannedCount),
+                            tostring(liveCount)
+                        )
+                )
+            end
+        end
+
+        local readOk, liveList =
+            pcall(
+                WB.CohortsGet,
+                classId
+            )
+
+        if not readOk then
+            block(
+                ("id=%s cohort recheck failed: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(liveList)
+                    )
+            )
+        else
+            result.cohortChecks =
+                result.cohortChecks + 1
+
+            local plannedList =
+                transaction.cohortListsBefore[
+                    classId
+                ]
+
+            if not valuesEqual(
+                liveList,
+                plannedList
+            ) then
+                block(
+                    ("id=%s cohort list changed after planning")
+                        :format(
+                            tostring(classId)
+                        )
+                )
+            end
+        end
+    end
+
+    if #result.reasons == 0 then
+        result.valid = true
+    end
+
+    return result.valid, result
 end
 
 function E.BuildPlayerTransaction()
@@ -1803,6 +2324,38 @@ end
 function E.PreviewPlayerTransaction()
     local transaction =
         E.BuildPlayerTransaction()
+
+        if transaction.valid then
+            local precheckOk, precheck =
+                E.RecheckPreconditions(
+                    transaction
+                )
+
+            txLog(
+                ("Precondition recheck: valid=%s checkedIds=%d inventoryChecks=%d cohortChecks=%d writes=%d")
+                    :format(
+                        tostring(precheckOk),
+                        precheck.checkedIds,
+                        precheck.inventoryChecks,
+                        precheck.cohortChecks,
+                        precheck.writes
+                    )
+            )
+
+            if not precheckOk then
+                transaction.valid = false
+
+                for _, reason in ipairs(
+                    precheck.reasons
+                ) do
+                    blockTransaction(
+                        transaction,
+                        "precondition recheck: "
+                        .. tostring(reason)
+                    )
+                end
+            end
+        end
 
     for _, rowPlan in ipairs(
     transaction.rowPlans
