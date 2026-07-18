@@ -393,3 +393,24 @@ function WitheringBrews_Cmd_AgingCohortRoundTrip(classId, confirmation)
     )
 end
 
+function WitheringBrews_Cmd_AgingTxApply(confirmation)
+    local execution = WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.ApplyPlayerTransaction
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging transaction apply unavailable"
+        )
+
+        return
+    end
+
+    execution.ApplyPlayerTransaction(
+        confirmation
+    )
+end
+

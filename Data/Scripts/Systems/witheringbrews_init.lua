@@ -62,4 +62,10 @@ System.AddCCommand(
     "WB: verified cohort read/write round-trip <classId> TEST"
 )
 
+System.AddCCommand(
+    "wb_age_tx_apply",
+    "WitheringBrews_Cmd_AgingTxApply(%1)",
+    "WB: apply guarded player aging transaction APPLY"
+)
+
 WitheringBrews.Handshake(50, 100)

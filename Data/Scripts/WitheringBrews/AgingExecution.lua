@@ -1,11 +1,12 @@
 -- Withering Brews: guarded aging transaction orchestration
 --
--- Patch 4, increment 3:
---   * capture and validate the complete player state;
---   * construct authoritative expected states;
---   * provide verified inventory add/remove primitives;
---   * provide a guarded inventory round-trip diagnostic;
---   * perform no aging transaction or LuaDB writes.
+-- Patch 4, increment 4:
+--   * construct authoritative aging transactions;
+--   * recheck live preconditions before mutation;
+--   * apply removals before additions;
+--   * write and verify complete expected cohort lists;
+--   * compensate inventory and cohorts on failure;
+--   * expose execution only through an explicit guarded command.
 
 WitheringBrews = WitheringBrews or {}
 
@@ -1449,6 +1450,324 @@ function E.RecheckPreconditions(transaction)
     return result.valid, result
 end
 
+function E.VerifyInventoryState(inventory, classIds, expectedCounts)
+    local result = {
+        valid = false,
+        reasons = {},
+        checkedIds = 0,
+        writes = 0,
+    }
+
+    local function block(reason)
+        result.reasons[
+            #result.reasons + 1
+        ] = tostring(reason)
+    end
+
+    if not inventory then
+        block("inventory unavailable")
+        return false, result
+    end
+
+    if type(classIds) ~= "table"
+        or type(expectedCounts) ~= "table"
+    then
+        block("inventory verification inputs unavailable")
+        return false, result
+    end
+
+    for _, classId in ipairs(classIds) do
+        result.checkedIds =
+            result.checkedIds + 1
+
+        local expected =
+            expectedCounts[classId]
+
+        if not isFiniteNumber(expected)
+            or expected < 0
+            or math.floor(expected) ~= expected
+        then
+            block(
+                ("id=%s expected inventory count is invalid: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(expected)
+                    )
+            )
+        else
+            local countOk,
+                liveCount,
+                countReason =
+                getInventoryCount(
+                    inventory,
+                    classId
+                )
+
+            if not countOk then
+                block(
+                    ("id=%s inventory verification failed: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(countReason)
+                        )
+                )
+            elseif liveCount ~= expected then
+                block(
+                    ("id=%s inventory mismatch: expected=%d live=%d")
+                        :format(
+                            tostring(classId),
+                            expected,
+                            liveCount
+                        )
+                )
+            end
+        end
+    end
+
+    if #result.reasons == 0 then
+        result.valid = true
+    end
+
+    return result.valid, result
+end
+
+function E.VerifyCohortState(
+    classIds,
+    expectedLists
+)
+    local result = {
+        valid = false,
+        reasons = {},
+        checkedIds = 0,
+        writes = 0,
+    }
+
+    local function block(reason)
+        result.reasons[
+            #result.reasons + 1
+        ] = tostring(reason)
+    end
+
+    if type(classIds) ~= "table"
+        or type(expectedLists) ~= "table"
+    then
+        block("cohort verification inputs unavailable")
+        return false, result
+    end
+
+    for _, classId in ipairs(classIds) do
+        result.checkedIds =
+            result.checkedIds + 1
+
+        local expectedList =
+            expectedLists[classId]
+
+        if type(expectedList) ~= "table" then
+            block(
+                ("id=%s expected cohort list is unavailable")
+                    :format(
+                        tostring(classId)
+                    )
+            )
+        else
+            local readOk, liveList =
+                pcall(
+                    WB.CohortsGet,
+                    classId
+                )
+
+            if not readOk then
+                block(
+                    ("id=%s cohort verification read failed: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(liveList)
+                        )
+                )
+            elseif not valuesEqual(
+                liveList,
+                expectedList
+            ) then
+                block(
+                    ("id=%s cohort list differs from expected state")
+                        :format(
+                            tostring(classId)
+                        )
+                )
+            end
+        end
+    end
+
+    if #result.reasons == 0 then
+        result.valid = true
+    end
+
+    return result.valid, result
+end
+
+function E.RestoreInventoryState(
+    inventory,
+    classIds,
+    expectedCounts
+)
+    local result = {
+        valid = false,
+        reasons = {},
+        mutationResults = {},
+        inventoryWrites = 0,
+    }
+
+    for _, classId in ipairs(classIds or {}) do
+        local targetCount =
+            expectedCounts
+            and expectedCounts[classId]
+            or nil
+
+        if not isFiniteNumber(targetCount)
+            or targetCount < 0
+            or math.floor(targetCount)
+                ~= targetCount
+        then
+            result.reasons[
+                #result.reasons + 1
+            ] =
+                ("id=%s compensation target is invalid")
+                    :format(
+                        tostring(classId)
+                    )
+        else
+            local restoreOk,
+                mutationResult,
+                restoreReason =
+                restoreClassCount(
+                    inventory,
+                    classId,
+                    targetCount
+                )
+
+            if mutationResult then
+                result.mutationResults[
+                    #result.mutationResults + 1
+                ] = mutationResult
+
+                result.inventoryWrites =
+                    result.inventoryWrites
+                    + (
+                        mutationResult.inventoryWrites
+                        or 0
+                    )
+            end
+
+            if not restoreOk then
+                result.reasons[
+                    #result.reasons + 1
+                ] =
+                    ("id=%s inventory compensation failed: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(restoreReason)
+                        )
+            end
+        end
+    end
+
+    local verifyOk, verification =
+        E.VerifyInventoryState(
+            inventory,
+            classIds,
+            expectedCounts
+        )
+
+    if not verifyOk then
+        for _, reason in ipairs(
+            verification.reasons
+        ) do
+            result.reasons[
+                #result.reasons + 1
+            ] =
+                "verification: "
+                .. tostring(reason)
+        end
+    end
+
+    if #result.reasons == 0 then
+        result.valid = true
+    end
+
+    return result.valid, result
+end
+
+function E.RestoreCohortState(
+    classIds,
+    expectedLists
+)
+    local result = {
+        valid = false,
+        reasons = {},
+        writeResults = {},
+        cohortWrites = 0,
+    }
+
+    for _, classId in ipairs(classIds or {}) do
+        local expectedList =
+            expectedLists
+            and expectedLists[classId]
+            or nil
+
+        local writeOk, writeResult =
+            E.WriteCohortListVerified(
+                classId,
+                expectedList
+            )
+
+        result.writeResults[
+            #result.writeResults + 1
+        ] = writeResult
+
+        result.cohortWrites =
+            result.cohortWrites
+            + (
+                writeResult.cohortWrites
+                or 0
+            )
+
+        if not writeOk then
+            result.reasons[
+                #result.reasons + 1
+            ] =
+                ("id=%s cohort compensation failed: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(writeResult.reason)
+                    )
+        end
+    end
+
+    local verifyOk, verification =
+        E.VerifyCohortState(
+            classIds,
+            expectedLists
+        )
+
+    if not verifyOk then
+        for _, reason in ipairs(
+            verification.reasons
+        ) do
+            result.reasons[
+                #result.reasons + 1
+            ] =
+                "verification: "
+                .. tostring(reason)
+        end
+    end
+
+    if #result.reasons == 0 then
+        result.valid = true
+    end
+
+    return result.valid, result
+end
+
 function E.BuildPlayerTransaction()
     local transaction = newTransaction()
 
@@ -2319,6 +2638,620 @@ function E.BuildPlayerTransaction()
     end
 
     return transaction
+end
+
+function E.ApplyPlayerTransaction(confirmation)
+    local summary = {
+        success = false,
+        failureReason = nil,
+
+        plannedAffectedIds = 0,
+
+        removalOperations = 0,
+        additionOperations = 0,
+        cohortOperations = 0,
+
+        inventoryWrites = 0,
+        cohortWrites = 0,
+
+        compensationAttempted = false,
+        compensationInventoryWrites = 0,
+        compensationCohortWrites = 0,
+        compensationSucceeded = false,
+    }
+
+    if confirmation ~= "APPLY" then
+        txLog(
+            "Apply aborted: explicit APPLY confirmation required"
+        )
+
+        return false, summary
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        txLog(
+            "Apply aborted: DryRun must be false"
+        )
+
+        return false, summary
+    end
+
+    local transaction =
+        E.BuildPlayerTransaction()
+
+    summary.plannedAffectedIds =
+        #transaction.affectedClassIds
+
+    if not transaction.valid then
+        txLog(
+            "Apply aborted: transaction is invalid"
+        )
+
+        for _, reason in ipairs(
+            transaction.blockedReasons
+        ) do
+            txLog(
+                "  BLOCKED " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    local precheckOk, precheck =
+        E.RecheckPreconditions(
+            transaction
+        )
+
+    txLog(
+        ("Apply precondition recheck: valid=%s checkedIds=%d inventoryChecks=%d cohortChecks=%d writes=0")
+            :format(
+                tostring(precheckOk),
+                precheck.checkedIds,
+                precheck.inventoryChecks,
+                precheck.cohortChecks
+            )
+    )
+
+    if not precheckOk then
+        txLog(
+            "Apply aborted: precondition recheck failed"
+        )
+
+        for _, reason in ipairs(
+            precheck.reasons
+        ) do
+            txLog(
+                "  " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    if #transaction.affectedClassIds == 0 then
+        summary.success = true
+
+        txLog(
+            "Apply complete: transaction has no affected state; writes=0"
+        )
+
+        return true, summary
+    end
+
+    local U = WB.Util
+
+    local playerEntity =
+        U
+        and type(U.Player) == "function"
+        and U.Player()
+        or nil
+
+    local inventory =
+        getInventory(playerEntity)
+
+    if not inventory then
+        txLog(
+            "Apply aborted: player inventory unavailable"
+        )
+
+        return false, summary
+    end
+
+    local cohortWriteIds = {}
+
+    for _, classId in ipairs(
+        transaction.affectedClassIds
+    ) do
+        if not valuesEqual(
+            transaction.cohortListsBefore[
+                classId
+            ],
+            transaction.cohortListsExpected[
+                classId
+            ]
+        ) then
+            cohortWriteIds[
+                #cohortWriteIds + 1
+            ] = classId
+        end
+    end
+
+    local touchedCohortIds = {}
+    local failureReason = nil
+
+    -- Phase 1: remove every source quantity.
+    for _, classId in ipairs(
+        transaction.configuredClassIds
+    ) do
+        if failureReason then
+            break
+        end
+
+        local quantity =
+            transaction.removalsByClassId[
+                classId
+            ] or 0
+
+        if quantity > 0 then
+            local removeOk, removeResult =
+                E.RemoveVerified(
+                    inventory,
+                    classId,
+                    quantity
+                )
+
+            summary.removalOperations =
+                summary.removalOperations + 1
+
+            summary.inventoryWrites =
+                summary.inventoryWrites
+                + (
+                    removeResult.inventoryWrites
+                    or 0
+                )
+
+            logMutationResult(
+                "TX REMOVE",
+                removeOk,
+                removeResult
+            )
+
+            if not removeOk then
+                failureReason =
+                    ("remove failed id=%s: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(
+                                removeResult.reason
+                            )
+                        )
+            end
+        end
+    end
+
+    -- Phase 2: add every target quantity.
+    if not failureReason then
+        for _, classId in ipairs(
+            transaction.configuredClassIds
+        ) do
+            if failureReason then
+                break
+            end
+
+            local quantity =
+                transaction.additionsByClassId[
+                    classId
+                ] or 0
+
+            if quantity > 0 then
+                local addOk, addResult =
+                    E.AddVerified(
+                        inventory,
+                        classId,
+                        quantity,
+                        1.0
+                    )
+
+                summary.additionOperations =
+                    summary.additionOperations
+                    + 1
+
+                summary.inventoryWrites =
+                    summary.inventoryWrites
+                    + (
+                        addResult.inventoryWrites
+                        or 0
+                    )
+
+                logMutationResult(
+                    "TX ADD",
+                    addOk,
+                    addResult
+                )
+
+                if not addOk then
+                    failureReason =
+                        ("add failed id=%s: %s")
+                            :format(
+                                tostring(classId),
+                                tostring(
+                                    addResult.reason
+                                )
+                            )
+                end
+            end
+        end
+    end
+
+    -- Phase 3: verify the complete inventory state.
+    if not failureReason then
+        local inventoryOk,
+            inventoryVerification =
+            E.VerifyInventoryState(
+                inventory,
+                transaction.configuredClassIds,
+                transaction.inventoryExpected
+            )
+
+        txLog(
+            ("Inventory verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(inventoryOk),
+                    inventoryVerification.checkedIds
+                )
+        )
+
+        if not inventoryOk then
+            failureReason =
+                "full inventory verification failed"
+
+            for _, reason in ipairs(
+                inventoryVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    -- Phase 4: write complete authoritative cohort lists.
+    if not failureReason then
+        for _, classId in ipairs(
+            cohortWriteIds
+        ) do
+            if failureReason then
+                break
+            end
+
+            -- Include the class before attempting the write:
+            -- an unsuccessful call may still mutate storage.
+            touchedCohortIds[
+                #touchedCohortIds + 1
+            ] = classId
+
+            local writeOk, writeResult =
+                E.WriteCohortListVerified(
+                    classId,
+                    transaction.cohortListsExpected[
+                        classId
+                    ]
+                )
+
+            summary.cohortOperations =
+                summary.cohortOperations + 1
+
+            summary.cohortWrites =
+                summary.cohortWrites
+                + (
+                    writeResult.cohortWrites
+                    or 0
+                )
+
+            logCohortWriteResult(
+                "TX COHORT WRITE",
+                writeOk,
+                writeResult
+            )
+
+            if not writeOk then
+                failureReason =
+                    ("cohort write failed id=%s: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(
+                                writeResult.reason
+                            )
+                        )
+            end
+        end
+    end
+
+    -- Phase 5: verify every configured cohort list.
+    if not failureReason then
+        local cohortsOk,
+            cohortVerification =
+            E.VerifyCohortState(
+                transaction.configuredClassIds,
+                transaction.cohortListsExpected
+            )
+
+        txLog(
+            ("Cohort verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(cohortsOk),
+                    cohortVerification.checkedIds
+                )
+        )
+
+        if not cohortsOk then
+            failureReason =
+                "full cohort verification failed"
+
+            for _, reason in ipairs(
+                cohortVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    -- Phase 6: run the existing validator.
+    if not failureReason then
+        if type(WB.CohortsValidatePlayer)
+            ~= "function"
+        then
+            failureReason =
+                "cohort validator unavailable"
+        else
+            local callOk,
+                validatorOk,
+                validatorSummary =
+                pcall(
+                    WB.CohortsValidatePlayer
+                )
+
+            if not callOk then
+                failureReason =
+                    "cohort validator raised an error: "
+                    .. tostring(validatorOk)
+            elseif not validatorOk
+                or type(validatorSummary)
+                    ~= "table"
+            then
+                failureReason =
+                    "cohort validator failed"
+            else
+                local validatorClean =
+                    (validatorSummary.missingQty or 0)
+                        == 0
+                    and (
+                        validatorSummary.excessQty
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.invalidRows
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.invalidLists
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.futureRows
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.preEpochRows
+                        or 0
+                    ) == 0
+
+                if not validatorClean then
+                    failureReason =
+                        "post-apply cohort validator reported inconsistencies"
+                end
+            end
+        end
+    end
+
+    -- Phase 7: rebuild the transaction. The newly created
+    -- target cohort should now be stable.
+    if not failureReason then
+        local postTransaction =
+            E.BuildPlayerTransaction()
+
+        if not postTransaction.valid then
+            failureReason =
+                "post-apply transaction is invalid"
+
+            for _, reason in ipairs(
+                postTransaction.blockedReasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        elseif #postTransaction.affectedClassIds
+            ~= 0
+        then
+            failureReason =
+                ("post-apply transaction still has affectedIds=%d")
+                    :format(
+                        #postTransaction.affectedClassIds
+                    )
+        else
+            txLog(
+                ("Post-apply transaction: valid=true activeIds=%d affectedIds=0 stableRows=%d")
+                    :format(
+                        postTransaction.summary.activeIds,
+                        postTransaction.summary.stableRows
+                    )
+            )
+        end
+    end
+
+    if failureReason then
+        summary.failureReason =
+            failureReason
+
+        summary.compensationAttempted = true
+
+        txLog(
+            "Apply FAILED: "
+            .. tostring(failureReason)
+        )
+
+        -- Required compensation order:
+        -- cohorts first, inventory second.
+        local cohortRestoreOk = true
+
+        if #touchedCohortIds > 0 then
+            local restoreOk, restoreResult =
+                E.RestoreCohortState(
+                    touchedCohortIds,
+                    transaction.cohortListsBefore
+                )
+
+            cohortRestoreOk = restoreOk
+
+            summary.compensationCohortWrites =
+                restoreResult.cohortWrites
+
+            txLog(
+                ("Cohort compensation: valid=%s ids=%d writes=%d")
+                    :format(
+                        tostring(restoreOk),
+                        #touchedCohortIds,
+                        restoreResult.cohortWrites
+                    )
+            )
+
+            for _, reason in ipairs(
+                restoreResult.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+
+        local inventoryRestoreOk,
+            inventoryRestoreResult =
+            E.RestoreInventoryState(
+                inventory,
+                transaction.configuredClassIds,
+                transaction.inventoryBefore
+            )
+
+        summary.compensationInventoryWrites =
+            inventoryRestoreResult.inventoryWrites
+
+        txLog(
+            ("Inventory compensation: valid=%s writes=%d")
+                :format(
+                    tostring(inventoryRestoreOk),
+                    inventoryRestoreResult.inventoryWrites
+                )
+        )
+
+        for _, reason in ipairs(
+            inventoryRestoreResult.reasons
+        ) do
+            txLog(
+                "  " .. tostring(reason)
+            )
+        end
+
+        local cohortsBeforeOk,
+            cohortsBeforeVerification =
+            E.VerifyCohortState(
+                transaction.configuredClassIds,
+                transaction.cohortListsBefore
+            )
+
+        local inventoryBeforeOk,
+            inventoryBeforeVerification =
+            E.VerifyInventoryState(
+                inventory,
+                transaction.configuredClassIds,
+                transaction.inventoryBefore
+            )
+
+        summary.compensationSucceeded =
+            cohortRestoreOk
+            and inventoryRestoreOk
+            and cohortsBeforeOk
+            and inventoryBeforeOk
+
+        if summary.compensationSucceeded then
+            txLog(
+                "Apply compensation verified: original state restored"
+            )
+        else
+            txLog(
+                "CRITICAL: APPLY COMPENSATION FAILED; inventory or cohort state may be inconsistent"
+            )
+
+            for _, reason in ipairs(
+                cohortsBeforeVerification.reasons
+            ) do
+                txLog(
+                    "  cohort: "
+                    .. tostring(reason)
+                )
+            end
+
+            for _, reason in ipairs(
+                inventoryBeforeVerification.reasons
+            ) do
+                txLog(
+                    "  inventory: "
+                    .. tostring(reason)
+                )
+            end
+        end
+
+        txLog(
+            ("Apply summary: success=false affectedIds=%d removals=%d additions=%d cohortOps=%d inventoryWrites=%d cohortWrites=%d compensation=%s compensationInventoryWrites=%d compensationCohortWrites=%d")
+                :format(
+                    summary.plannedAffectedIds,
+                    summary.removalOperations,
+                    summary.additionOperations,
+                    summary.cohortOperations,
+                    summary.inventoryWrites,
+                    summary.cohortWrites,
+                    tostring(
+                        summary.compensationSucceeded
+                    ),
+                    summary.compensationInventoryWrites,
+                    summary.compensationCohortWrites
+                )
+        )
+
+        return false, summary
+    end
+
+    summary.success = true
+
+    txLog(
+        ("Apply summary: success=true affectedIds=%d removals=%d additions=%d cohortOps=%d inventoryWrites=%d cohortWrites=%d compensation=false")
+            :format(
+                summary.plannedAffectedIds,
+                summary.removalOperations,
+                summary.additionOperations,
+                summary.cohortOperations,
+                summary.inventoryWrites,
+                summary.cohortWrites
+            )
+    )
+
+    return true, summary
 end
 
 function E.PreviewPlayerTransaction()
