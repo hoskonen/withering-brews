@@ -116,6 +116,7 @@ function Dev.PrintHelp()
     log("  wb_age_selftest                      - run pure aging planner self-tests")
     log("  wb_age_validate_rules                - validate configured aging rules and boundaries")
     log("  wb_age_preview                       - preview current player potion aging and planned transitions")
+    log("  wb_age_tx_preview                    - construct full aging transaction shell (read-only)")
     log("Spawn commands mutate inventory only; they do not create or alter cohorts.")
 end
 

@@ -1,0 +1,1265 @@
+-- Withering Brews: guarded aging transaction orchestration
+--
+-- Patch 4, increment 2:
+--   * capture and validate the complete player state;
+--   * plan every original cohort exactly once;
+--   * construct authoritative expected inventory and cohort states;
+--   * perform no inventory or LuaDB writes.
+
+WitheringBrews = WitheringBrews or {}
+
+local WB = WitheringBrews
+
+WB.AgingExecution = WB.AgingExecution or {}
+
+local E = WB.AgingExecution
+
+local function txLog(message)
+    System.LogAlways(
+        "[WitheringBrews/AgingTx] "
+        .. tostring(message)
+    )
+end
+
+local function isFiniteNumber(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
+local function isPositiveInteger(value)
+    return isFiniteNumber(value)
+        and value >= 1
+        and math.floor(value) == value
+end
+
+local function isBootstrapSource(value)
+    return type(value) == "string"
+        and value:sub(1, 10) == "bootstrap:"
+end
+
+local function copyValue(value)
+    if type(value) ~= "table" then
+        return value
+    end
+
+    local result = {}
+
+    for key, child in pairs(value) do
+        result[key] = copyValue(child)
+    end
+
+    return result
+end
+
+local function valuesEqual(left, right)
+    if type(left) ~= type(right) then
+        return false
+    end
+
+    if type(left) ~= "table" then
+        return left == right
+    end
+
+    for key, value in pairs(left) do
+        if not valuesEqual(
+            value,
+            right[key]
+        ) then
+            return false
+        end
+    end
+
+    for key in pairs(right) do
+        if left[key] == nil then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function addExactCohort(
+    list,
+    incoming
+)
+    for _, row in ipairs(list) do
+        if row.created_at == incoming.created_at
+            and row.source == incoming.source
+        then
+            row.qty = row.qty + incoming.qty
+
+            return "merged"
+        end
+    end
+
+    table.insert(
+        list,
+        copyValue(incoming)
+    )
+
+    return "appended"
+end
+
+local function getInventory(entity)
+    if not entity then
+        return nil
+    end
+
+    if entity.inventory then
+        return entity.inventory
+    end
+
+    if type(entity.GetInventory) == "function" then
+        local ok, inventory =
+            pcall(
+                entity.GetInventory,
+                entity
+            )
+
+        if ok then
+            return inventory
+        end
+    end
+
+    return nil
+end
+
+local function inspectCohortList(
+    list,
+    currentTime
+)
+    if type(list) ~= "table" then
+        return false, 0, 0,
+            "cohort value is not a table"
+    end
+
+    local rowCount = 0
+    local maximumIndex = 0
+
+    for key in pairs(list) do
+        if type(key) ~= "number"
+            or key < 1
+            or math.floor(key) ~= key
+        then
+            return false, rowCount, 0,
+                "cohort list has an invalid array key"
+        end
+
+        rowCount = rowCount + 1
+        maximumIndex =
+            math.max(
+                maximumIndex,
+                key
+            )
+    end
+
+    if maximumIndex ~= rowCount then
+        return false, rowCount, 0,
+            "cohort list is sparse"
+    end
+
+    local totalQty = 0
+
+    for index, row in ipairs(list) do
+        if type(row) ~= "table" then
+            return false, rowCount, totalQty,
+                ("row %d is not a table")
+                    :format(index)
+        end
+
+        local qty = row.qty
+        local createdAt = row.created_at
+        local source = row.source
+
+        if not isPositiveInteger(qty) then
+            return false, rowCount, totalQty,
+                ("row %d has invalid qty")
+                    :format(index)
+        end
+
+        if not isFiniteNumber(createdAt) then
+            return false, rowCount, totalQty,
+                ("row %d has invalid created_at")
+                    :format(index)
+        end
+
+        if createdAt < 0
+            and not isBootstrapSource(source)
+        then
+            return false, rowCount, totalQty,
+                ("row %d has negative non-bootstrap timestamp")
+                    :format(index)
+        end
+
+        if createdAt > currentTime then
+            return false, rowCount, totalQty,
+                ("row %d is dated in the future")
+                    :format(index)
+        end
+
+        if type(source) ~= "string"
+            or source == ""
+        then
+            return false, rowCount, totalQty,
+                ("row %d has invalid source")
+                    :format(index)
+        end
+
+        totalQty = totalQty + qty
+    end
+
+    return true, rowCount, totalQty, nil
+end
+
+local function newTransaction()
+    return {
+        valid = false,
+        blockedReasons = {},
+
+        currentTime = nil,
+
+        inventoryBefore = {},
+        inventoryExpected = {},
+
+        cohortListsBefore = {},
+        cohortListsExpected = {},
+
+        removalsByClassId = {},
+        additionsByClassId = {},
+        netInventoryDeltaByClassId = {},
+
+        configuredClassIds = {},
+        activeClassIds = {},
+        affectedClassIds = {},
+
+        rowPlans = {},
+
+        summary = {
+            configuredIds = 0,
+            activeIds = 0,
+            affectedIds = 0,
+            sourceRows = 0,
+            stableRows = 0,
+            downgradeRows = 0,
+            terminalRows = 0,
+            removals = 0,
+            additions = 0,
+            cohortWrites = 0,
+            inventoryWrites = 0,
+        },
+    }
+end
+
+local function blockTransaction(
+    transaction,
+    reason
+)
+    transaction.blockedReasons[
+        #transaction.blockedReasons + 1
+    ] = tostring(reason)
+end
+
+function E.BuildPlayerTransaction()
+    local transaction = newTransaction()
+
+    if type(WB.BuildPotionIndex) == "function" then
+        WB.BuildPotionIndex()
+    end
+
+    local U = WB.Util
+
+    if not (
+        U
+        and type(U.Player) == "function"
+        and type(U.InventorySnapshot) == "function"
+    ) then
+        blockTransaction(
+            transaction,
+            "inventory utilities unavailable"
+        )
+
+        return transaction
+    end
+
+    if type(WB.CohortsGet) ~= "function" then
+        blockTransaction(
+            transaction,
+            "cohort storage unavailable"
+        )
+
+        return transaction
+    end
+
+    local playerEntity = U.Player()
+
+    if not playerEntity then
+        blockTransaction(
+            transaction,
+            "player unavailable"
+        )
+
+        return transaction
+    end
+
+    local inventory = getInventory(playerEntity)
+
+    if not inventory then
+        blockTransaction(
+            transaction,
+            "player inventory unavailable"
+        )
+
+        return transaction
+    end
+
+    -- Transaction verification requires authoritative class counts.
+    if type(inventory.GetCountOfClass) ~= "function" then
+        blockTransaction(
+            transaction,
+            "inventory.GetCountOfClass unavailable"
+        )
+
+        return transaction
+    end
+
+    if type(inventory.GetInventoryTable) ~= "function" then
+        blockTransaction(
+            transaction,
+            "inventory.GetInventoryTable unavailable"
+        )
+
+        return transaction
+    end
+
+    local currentTime =
+        WB.Clock
+        and type(WB.Clock.Now) == "function"
+        and WB.Clock.Now()
+        or nil
+
+    if not isFiniteNumber(currentTime) then
+        blockTransaction(
+            transaction,
+            "world clock unavailable"
+        )
+
+        return transaction
+    end
+
+    transaction.currentTime = currentTime
+
+    local snapshot =
+        U.InventorySnapshot(playerEntity)
+
+    if type(snapshot) ~= "table" then
+        blockTransaction(
+            transaction,
+            "inventory snapshot failed"
+        )
+
+        return transaction
+    end
+
+    for classId in pairs(WB._PotionIndex or {}) do
+        transaction.configuredClassIds[
+            #transaction.configuredClassIds + 1
+        ] = classId
+    end
+
+    table.sort(
+        transaction.configuredClassIds
+    )
+
+    transaction.summary.configuredIds =
+        #transaction.configuredClassIds
+
+    for _, classId in ipairs(
+        transaction.configuredClassIds
+    ) do
+        local inventoryQty =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(snapshot[classId])
+                    or 0
+                )
+            )
+
+        transaction.inventoryBefore[classId] =
+            inventoryQty
+
+        -- Increment 1 expects no state changes.
+        transaction.inventoryExpected[classId] =
+            inventoryQty
+
+        local readOk, cohortList =
+            pcall(
+                WB.CohortsGet,
+                classId
+            )
+
+        if not readOk then
+            local readError = cohortList
+
+            cohortList = {}
+
+            blockTransaction(
+                transaction,
+                ("id=%s cohort read failed: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(readError)
+                    )
+            )
+        end
+
+        transaction.cohortListsBefore[classId] =
+            copyValue(cohortList)
+
+        -- Increment 2 reconstructs the complete final lists
+        -- from original cohort contributions.
+        transaction.cohortListsExpected[classId] = {}
+
+        local validList,
+            rowCount,
+            cohortQty,
+            validationReason =
+            inspectCohortList(
+                cohortList,
+                currentTime
+            )
+
+        local hasStoredCohorts =
+            type(cohortList) == "table"
+            and next(cohortList) ~= nil
+
+        local active =
+            inventoryQty > 0
+            or hasStoredCohorts
+
+        if active then
+            transaction.activeClassIds[
+                #transaction.activeClassIds + 1
+            ] = classId
+
+            transaction.summary.activeIds =
+                transaction.summary.activeIds + 1
+        end
+
+        transaction.summary.sourceRows =
+            transaction.summary.sourceRows
+            + rowCount
+
+        if not validList then
+            blockTransaction(
+                transaction,
+                ("id=%s invalid cohort list: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(validationReason)
+                    )
+            )
+        elseif cohortQty ~= inventoryQty then
+            blockTransaction(
+                transaction,
+                ("id=%s inventory/cohort mismatch: inventory=%d cohorts=%d")
+                    :format(
+                        tostring(classId),
+                        inventoryQty,
+                        cohortQty
+                    )
+            )
+        elseif active then
+            local potion =
+                type(WB.GetTrackedPotion) == "function"
+                and WB.GetTrackedPotion(classId)
+                or nil
+
+            txLog(
+                ("ACTIVE family=%s tier=%s id=%s inventory=%d cohorts=%d rows=%d")
+                    :format(
+                        tostring(
+                            potion
+                            and potion.family
+                            or "?"
+                        ),
+                        tostring(
+                            potion
+                            and (
+                                potion.label
+                                or potion.tier
+                            )
+                            or "?"
+                        ),
+                        tostring(classId),
+                        inventoryQty,
+                        cohortQty,
+                        rowCount
+                    )
+            )
+        end
+    end
+
+    -- Do not plan against unreconciled or invalid source state.
+    if #transaction.blockedReasons > 0 then
+        return transaction
+    end
+
+    local A = WB.Aging
+
+    if not (
+        A
+        and type(A.ResolveRules) == "function"
+        and type(A.PlanCohort) == "function"
+    ) then
+        blockTransaction(
+            transaction,
+            "aging planner unavailable"
+        )
+
+        return transaction
+    end
+
+    local configuredSet = {}
+
+    for _, classId in ipairs(
+        transaction.configuredClassIds
+    ) do
+        configuredSet[classId] = true
+    end
+
+    -- Every original row produces exactly one emission.
+    -- Unchanged emissions are copied first. Transformed
+    -- emissions are added afterward with exact compaction.
+    local unchangedEmissions = {}
+    local transformedEmissions = {}
+
+    for _, sourceClassId in ipairs(
+        transaction.activeClassIds
+    ) do
+        local potion =
+            type(WB.GetTrackedPotion) == "function"
+            and WB.GetTrackedPotion(sourceClassId)
+            or nil
+
+        local familyData =
+            potion
+            and WB.Config
+            and WB.Config.PotionFamilies
+            and WB.Config.PotionFamilies[
+                potion.family
+            ]
+            or nil
+
+        if not potion then
+            blockTransaction(
+                transaction,
+                ("id=%s tracked potion data unavailable")
+                    :format(
+                        tostring(sourceClassId)
+                    )
+            )
+        elseif not familyData then
+            blockTransaction(
+                transaction,
+                ("id=%s family data unavailable")
+                    :format(
+                        tostring(sourceClassId)
+                    )
+            )
+        else
+            local rulesOk, rulesOrReason =
+                A.ResolveRules(
+                    familyData,
+                    {
+                        durationMultiplier = 1,
+                    }
+                )
+
+            if not rulesOk then
+                blockTransaction(
+                    transaction,
+                    ("id=%s rules unavailable: %s")
+                        :format(
+                            tostring(sourceClassId),
+                            tostring(rulesOrReason)
+                        )
+                )
+            else
+                local sourceList =
+                    transaction.cohortListsBefore[
+                        sourceClassId
+                    ]
+
+                for rowIndex, sourceRow in ipairs(
+                    sourceList
+                ) do
+                    local plan =
+                        A.PlanCohort(
+                            potion.family,
+                            familyData,
+                            potion.tier,
+                            sourceRow,
+                            currentTime,
+                            rulesOrReason
+                        )
+
+                    transaction.rowPlans[
+                        #transaction.rowPlans + 1
+                    ] = {
+                        sourceClassId =
+                            sourceClassId,
+
+                        sourceRowIndex =
+                            rowIndex,
+
+                        plan =
+                            copyValue(plan),
+                    }
+
+                    local planValid = true
+
+                    local function blockPlan(reason)
+                        planValid = false
+
+                        blockTransaction(
+                            transaction,
+                            ("id=%s row=%d: %s")
+                                :format(
+                                    tostring(
+                                        sourceClassId
+                                    ),
+                                    rowIndex,
+                                    tostring(reason)
+                                )
+                        )
+                    end
+
+                    if type(plan) ~= "table" then
+                        blockPlan(
+                            "planner result is not a table"
+                        )
+                    elseif plan.status == "blocked" then
+                        blockPlan(
+                            "planner blocked: "
+                            .. tostring(plan.reason)
+                        )
+                    else
+                        if not isPositiveInteger(
+                            plan.qty
+                        ) then
+                            blockPlan(
+                                "planned qty is invalid"
+                            )
+                        elseif plan.qty
+                            ~= sourceRow.qty
+                        then
+                            blockPlan(
+                                ("planned qty changed: source=%d planned=%s")
+                                    :format(
+                                        sourceRow.qty,
+                                        tostring(
+                                            plan.qty
+                                        )
+                                    )
+                            )
+                        end
+
+                        if plan.sourceClassId
+                            ~= sourceClassId
+                        then
+                            blockPlan(
+                                "planned source class ID does not match source list"
+                            )
+                        elseif not configuredSet[
+                            plan.sourceClassId
+                        ] then
+                            blockPlan(
+                                "planned source class ID is not configured"
+                            )
+                        end
+
+                        if type(plan.targetClassId)
+                            ~= "string"
+                            or plan.targetClassId == ""
+                        then
+                            blockPlan(
+                                "planned target class ID is missing"
+                            )
+                        elseif not configuredSet[
+                            plan.targetClassId
+                        ] then
+                            blockPlan(
+                                "planned target class ID is not configured"
+                            )
+                        else
+                            local targetPotion =
+                                type(
+                                    WB.GetTrackedPotion
+                                ) == "function"
+                                and WB.GetTrackedPotion(
+                                    plan.targetClassId
+                                )
+                                or nil
+
+                            if not targetPotion then
+                                blockPlan(
+                                    "planned target potion data is unavailable"
+                                )
+                            elseif targetPotion.family
+                                ~= potion.family
+                            then
+                                blockPlan(
+                                    ("planned target belongs to another family: source=%s target=%s")
+                                        :format(
+                                            tostring(
+                                                potion.family
+                                            ),
+                                            tostring(
+                                                targetPotion.family
+                                            )
+                                        )
+                                )
+                            end
+                        end
+
+                        if not isFiniteNumber(
+                            plan.targetCreatedAt
+                        ) then
+                            blockPlan(
+                                "planned targetCreatedAt is invalid"
+                            )
+                        elseif plan.targetCreatedAt
+                            > currentTime
+                        then
+                            blockPlan(
+                                "planned targetCreatedAt is in the future"
+                            )
+                        end
+
+                        if plan.originalSource
+                            ~= sourceRow.source
+                        then
+                            blockPlan(
+                                "planned source metadata changed"
+                            )
+                        end
+
+                        if plan.family
+                            ~= potion.family
+                        then
+                            blockPlan(
+                                "planned family does not match source family"
+                            )
+                        end
+                    end
+
+                    if planValid then
+                        if plan.status == "stable" then
+                            if plan.requiresReplacement then
+                                blockPlan(
+                                    "stable plan unexpectedly requires replacement"
+                                )
+                            elseif plan.targetClassId
+                                ~= sourceClassId
+                            then
+                                blockPlan(
+                                    "stable plan changed class ID"
+                                )
+                            else
+                                transaction.summary.stableRows =
+                                    transaction.summary.stableRows
+                                    + 1
+
+                                unchangedEmissions[
+                                    #unchangedEmissions + 1
+                                ] = {
+                                    targetClassId =
+                                        sourceClassId,
+
+                                    row =
+                                        copyValue(
+                                            sourceRow
+                                        ),
+                                }
+                            end
+                        elseif plan.status
+                            == "downgrade"
+                        then
+                            if not plan.requiresReplacement then
+                                blockPlan(
+                                    "downgrade plan does not require replacement"
+                                )
+                            elseif plan.targetClassId
+                                == sourceClassId
+                            then
+                                blockPlan(
+                                    "downgrade plan retained source class ID"
+                                )
+                            else
+                                transaction.summary.downgradeRows =
+                                    transaction.summary.downgradeRows
+                                    + 1
+
+                                transaction.removalsByClassId[
+                                    sourceClassId
+                                ] =
+                                    (
+                                        transaction.removalsByClassId[
+                                            sourceClassId
+                                        ]
+                                        or 0
+                                    )
+                                    + plan.qty
+
+                                transaction.additionsByClassId[
+                                    plan.targetClassId
+                                ] =
+                                    (
+                                        transaction.additionsByClassId[
+                                            plan.targetClassId
+                                        ]
+                                        or 0
+                                    )
+                                    + plan.qty
+
+                                transformedEmissions[
+                                    #transformedEmissions + 1
+                                ] = {
+                                    targetClassId =
+                                        plan.targetClassId,
+
+                                    row = {
+                                        qty = plan.qty,
+                                        created_at =
+                                            plan.targetCreatedAt,
+                                        source =
+                                            plan.originalSource,
+                                    },
+                                }
+                            end
+                        elseif plan.status
+                            == "terminal"
+                        then
+                            transaction.summary.terminalRows =
+                                transaction.summary.terminalRows
+                                + 1
+
+                            if plan.requiresReplacement then
+                                if plan.sourceTier <= 1 then
+                                    blockPlan(
+                                        "terminal Quality I unexpectedly requires replacement"
+                                    )
+                                elseif plan.targetTier
+                                    ~= 1
+                                then
+                                    blockPlan(
+                                        "terminal replacement does not target Quality I"
+                                    )
+                                elseif plan.targetClassId
+                                    == sourceClassId
+                                then
+                                    blockPlan(
+                                        "terminal replacement retained source class ID"
+                                    )
+                                else
+                                    transaction.removalsByClassId[
+                                        sourceClassId
+                                    ] =
+                                        (
+                                            transaction.removalsByClassId[
+                                                sourceClassId
+                                            ]
+                                            or 0
+                                        )
+                                        + plan.qty
+
+                                    transaction.additionsByClassId[
+                                        plan.targetClassId
+                                    ] =
+                                        (
+                                            transaction.additionsByClassId[
+                                                plan.targetClassId
+                                            ]
+                                            or 0
+                                        )
+                                        + plan.qty
+
+                                    transformedEmissions[
+                                        #transformedEmissions + 1
+                                    ] = {
+                                        targetClassId =
+                                            plan.targetClassId,
+
+                                        row = {
+                                            qty = plan.qty,
+                                            created_at =
+                                                plan.targetCreatedAt,
+                                            source =
+                                                plan.originalSource,
+                                        },
+                                    }
+                                end
+                            else
+                                if plan.sourceTier ~= 1
+                                    or plan.targetTier ~= 1
+                                    or plan.targetClassId
+                                        ~= sourceClassId
+                                then
+                                    blockPlan(
+                                        "terminal keep plan is not a Quality I no-op"
+                                    )
+                                else
+                                    -- Terminal Quality I with keep policy:
+                                    -- preserve the original row exactly.
+                                    unchangedEmissions[
+                                        #unchangedEmissions + 1
+                                    ] = {
+                                        targetClassId =
+                                            sourceClassId,
+
+                                        row =
+                                            copyValue(
+                                                sourceRow
+                                            ),
+                                    }
+                                end
+                            end
+                        else
+                            blockPlan(
+                                "unsupported planner status: "
+                                .. tostring(
+                                    plan.status
+                                )
+                            )
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if #transaction.blockedReasons > 0 then
+        return transaction
+    end
+
+    -- Pass 1: preserve unchanged rows without compacting them.
+    for _, emission in ipairs(
+        unchangedEmissions
+    ) do
+        table.insert(
+            transaction.cohortListsExpected[
+                emission.targetClassId
+            ],
+            copyValue(emission.row)
+        )
+    end
+
+    -- Pass 2: add transformed rows and compact only exact
+    -- target timestamp/source matches.
+    for _, emission in ipairs(
+        transformedEmissions
+    ) do
+        addExactCohort(
+            transaction.cohortListsExpected[
+                emission.targetClassId
+            ],
+            emission.row
+        )
+    end
+
+    local totalBefore = 0
+    local totalRemovals = 0
+    local totalAdditions = 0
+    local totalExpected = 0
+
+    for _, classId in ipairs(
+        transaction.configuredClassIds
+    ) do
+        local beforeQty =
+            transaction.inventoryBefore[
+                classId
+            ]
+            or 0
+
+        local removalQty =
+            transaction.removalsByClassId[
+                classId
+            ]
+            or 0
+
+        local additionQty =
+            transaction.additionsByClassId[
+                classId
+            ]
+            or 0
+
+        local netDelta =
+            additionQty - removalQty
+
+        local expectedQty =
+            beforeQty + netDelta
+
+        transaction.netInventoryDeltaByClassId[
+            classId
+        ] = netDelta
+
+        transaction.inventoryExpected[
+            classId
+        ] = expectedQty
+
+        totalBefore =
+            totalBefore + beforeQty
+
+        totalRemovals =
+            totalRemovals + removalQty
+
+        totalAdditions =
+            totalAdditions + additionQty
+
+        totalExpected =
+            totalExpected + expectedQty
+
+        if expectedQty < 0 then
+            blockTransaction(
+                transaction,
+                ("id=%s expected inventory is negative: %d")
+                    :format(
+                        tostring(classId),
+                        expectedQty
+                    )
+            )
+        end
+
+        local validExpected,
+            expectedRows,
+            expectedCohortQty,
+            expectedReason =
+            inspectCohortList(
+                transaction.cohortListsExpected[
+                    classId
+                ],
+                currentTime
+            )
+
+        if not validExpected then
+            blockTransaction(
+                transaction,
+                ("id=%s expected cohort list is invalid: %s")
+                    :format(
+                        tostring(classId),
+                        tostring(expectedReason)
+                    )
+            )
+        elseif expectedCohortQty
+            ~= expectedQty
+        then
+            blockTransaction(
+                transaction,
+                ("id=%s expected inventory/cohort mismatch: inventory=%d cohorts=%d")
+                    :format(
+                        tostring(classId),
+                        expectedQty,
+                        expectedCohortQty
+                    )
+            )
+        end
+
+        local cohortChanged =
+            not valuesEqual(
+                transaction.cohortListsBefore[
+                    classId
+                ],
+                transaction.cohortListsExpected[
+                    classId
+                ]
+            )
+
+        local inventoryChanged =
+            expectedQty ~= beforeQty
+
+        if cohortChanged
+            or inventoryChanged
+        then
+            transaction.affectedClassIds[
+                #transaction.affectedClassIds + 1
+            ] = classId
+        end
+    end
+
+    transaction.summary.removals =
+        totalRemovals
+
+    transaction.summary.additions =
+        totalAdditions
+
+    transaction.summary.affectedIds =
+        #transaction.affectedClassIds
+
+    if totalBefore
+        - totalRemovals
+        + totalAdditions
+        ~= totalExpected
+    then
+        blockTransaction(
+            transaction,
+            ("global inventory invariant failed: before=%d removals=%d additions=%d expected=%d")
+                :format(
+                    totalBefore,
+                    totalRemovals,
+                    totalAdditions,
+                    totalExpected
+                )
+        )
+    end
+
+    if totalRemovals ~= totalAdditions then
+        blockTransaction(
+            transaction,
+            ("replacement quantity invariant failed: removals=%d additions=%d")
+                :format(
+                    totalRemovals,
+                    totalAdditions
+                )
+        )
+    end
+
+    if #transaction.blockedReasons == 0 then
+        transaction.valid = true
+    end
+
+    return transaction
+end
+
+function E.PreviewPlayerTransaction()
+    local transaction =
+        E.BuildPlayerTransaction()
+
+    for _, rowPlan in ipairs(
+    transaction.rowPlans
+    ) do
+        local plan = rowPlan.plan
+
+        txLog(
+            ("ROW sourceId=%s row=%d status=%s qty=%s sourceTier=%s targetTier=%s targetId=%s targetCreatedAt=%s replacement=%s")
+                :format(
+                    tostring(
+                        rowPlan.sourceClassId
+                    ),
+                    tonumber(
+                        rowPlan.sourceRowIndex
+                    ) or 0,
+                    tostring(
+                        plan
+                        and plan.status
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.qty
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.sourceTier
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.targetTier
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.targetClassId
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.targetCreatedAt
+                        or "?"
+                    ),
+                    tostring(
+                        plan
+                        and plan.requiresReplacement
+                        or false
+                    )
+                )
+        )
+    end
+
+    for _, classId in ipairs(
+        transaction.affectedClassIds
+    ) do
+        txLog(
+            ("AFFECTED id=%s inventory=%d->%d remove=%d add=%d net=%d cohorts=%d->%d")
+                :format(
+                    tostring(classId),
+
+                    transaction.inventoryBefore[
+                        classId
+                    ] or 0,
+
+                    transaction.inventoryExpected[
+                        classId
+                    ] or 0,
+
+                    transaction.removalsByClassId[
+                        classId
+                    ] or 0,
+
+                    transaction.additionsByClassId[
+                        classId
+                    ] or 0,
+
+                    transaction.netInventoryDeltaByClassId[
+                        classId
+                    ] or 0,
+
+                    #(
+                        transaction.cohortListsBefore[
+                            classId
+                        ] or {}
+                    ),
+
+                    #(
+                        transaction.cohortListsExpected[
+                            classId
+                        ] or {}
+                    )
+                )
+        )
+    end    
+
+    for _, reason in ipairs(
+        transaction.blockedReasons
+    ) do
+        txLog(
+            "BLOCKED " .. tostring(reason)
+        )
+    end
+
+    local summary = transaction.summary
+
+    txLog(
+        ("Preview summary: valid=%s configuredIds=%d activeIds=%d affectedIds=%d sourceRows=%d stableRows=%d downgradeRows=%d terminalRows=%d removals=%d additions=%d cohortWrites=%d inventoryWrites=%d")
+            :format(
+                tostring(transaction.valid),
+                summary.configuredIds,
+                summary.activeIds,
+                summary.affectedIds,
+                summary.sourceRows,
+                summary.stableRows,
+                summary.downgradeRows,
+                summary.terminalRows,
+                summary.removals,
+                summary.additions,
+                summary.cohortWrites,
+                summary.inventoryWrites
+            )
+    )
+
+    return transaction.valid, transaction
+end

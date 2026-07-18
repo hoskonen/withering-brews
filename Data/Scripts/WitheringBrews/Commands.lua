@@ -267,6 +267,25 @@ function WitheringBrews_Cmd_AgingPreview()
     aging.PreviewPlayer()
 end
 
+function WitheringBrews_Cmd_AgingTxPreview()
+    local execution = WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.PreviewPlayerTransaction
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging transaction preview unavailable"
+        )
+
+        return
+    end
+
+    execution.PreviewPlayerTransaction()
+end
+
 function WitheringBrews_Cmd_AgingValidateRules()
     local aging = WB.Aging
 

@@ -12,6 +12,7 @@ Script.ReloadScript("Scripts/WitheringBrews/Clock.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Core.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Events.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Cohorts.lua")
+Script.ReloadScript("Scripts/WitheringBrews/AgingExecution.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Dev.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Commands.lua") -- NEW: handlers centralized
 
@@ -47,5 +48,6 @@ System.AddCCommand("wb_coh_validate", "WitheringBrews_Cmd_CohValidate()", "WB: v
 System.AddCCommand("wb_age_selftest", "WitheringBrews_Cmd_AgingSelfTest()", "WB: run pure aging planner self-tests")
 System.AddCCommand("wb_age_preview", "WitheringBrews_Cmd_AgingPreview()", "WB: preview player potion aging (read-only)")
 System.AddCCommand("wb_age_validate_rules", "WitheringBrews_Cmd_AgingValidateRules()", "WB: validate configured aging rules (read-only)")
+System.AddCCommand("wb_age_tx_preview", "WitheringBrews_Cmd_AgingTxPreview()", "WB: construct player aging transaction (read-only)")
 
 WitheringBrews.Handshake(50, 100)
