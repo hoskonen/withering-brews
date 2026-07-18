@@ -126,6 +126,46 @@ local function getInventory(entity)
     return nil
 end
 
+local function getInventoryCount(inventory, classId)
+    if not inventory then
+        return false, nil,
+            "inventory unavailable"
+    end
+
+    if type(inventory.GetCountOfClass)
+        ~= "function"
+    then
+        return false, nil,
+            "GetCountOfClass unavailable"
+    end
+
+    local ok, value =
+        pcall(
+            inventory.GetCountOfClass,
+            inventory,
+            tostring(classId)
+        )
+
+    if not ok then
+        return false, nil,
+            "GetCountOfClass failed: "
+            .. tostring(value)
+    end
+
+    value = tonumber(value)
+
+    if not isFiniteNumber(value)
+        or value < 0
+        or math.floor(value) ~= value
+    then
+        return false, nil,
+            "GetCountOfClass returned invalid count: "
+            .. tostring(value)
+    end
+
+    return true, value, nil
+end
+
 local function inspectCohortList(
     list,
     currentTime
@@ -252,13 +292,640 @@ local function newTransaction()
     }
 end
 
-local function blockTransaction(
-    transaction,
-    reason
-)
+local function blockTransaction(transaction,mreason)
     transaction.blockedReasons[
         #transaction.blockedReasons + 1
     ] = tostring(reason)
+end
+
+function E.RemoveVerified(
+    inventory,
+    classId,
+    quantity
+)
+    local result = {
+        operation = "remove",
+        classId = classId,
+        requested = quantity,
+
+        before = nil,
+        after = nil,
+        actual = nil,
+
+        engineResult = nil,
+        reason = nil,
+
+        inventoryWrites = 0,
+    }
+
+    if type(classId) ~= "string"
+        or classId == ""
+    then
+        result.reason =
+            "class ID is missing"
+
+        return false, result
+    end
+
+    quantity = tonumber(quantity)
+
+    if not isPositiveInteger(quantity) then
+        result.reason =
+            "quantity must be a positive integer"
+
+        return false, result
+    end
+
+    result.requested = quantity
+
+    if not inventory then
+        result.reason =
+            "inventory unavailable"
+
+        return false, result
+    end
+
+    if type(inventory.DeleteItemOfClass)
+        ~= "function"
+    then
+        result.reason =
+            "DeleteItemOfClass unavailable"
+
+        return false, result
+    end
+
+    local beforeOk,
+        before,
+        beforeReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not beforeOk then
+        result.reason = beforeReason
+
+        return false, result
+    end
+
+    result.before = before
+
+    if before < quantity then
+        result.after = before
+        result.actual = 0
+
+        result.reason =
+            ("insufficient quantity: available=%d requested=%d")
+                :format(
+                    before,
+                    quantity
+                )
+
+        return false, result
+    end
+
+    result.inventoryWrites = 1
+
+    local callOk, engineResult =
+        pcall(
+            inventory.DeleteItemOfClass,
+            inventory,
+            tostring(classId),
+            quantity
+        )
+
+    result.engineResult = engineResult
+
+    local afterOk,
+        after,
+        afterReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not afterOk then
+        result.reason =
+            "post-remove count failed: "
+            .. tostring(afterReason)
+
+        if not callOk then
+            result.reason =
+                result.reason
+                .. "; engine error: "
+                .. tostring(engineResult)
+        end
+
+        return false, result
+    end
+
+    result.after = after
+    result.actual = before - after
+
+    if not callOk then
+        result.reason =
+            "DeleteItemOfClass failed: "
+            .. tostring(engineResult)
+
+        return false, result
+    end
+
+    if result.actual ~= quantity then
+        result.reason =
+            ("remove quantity mismatch: requested=%d actual=%d")
+                :format(
+                    quantity,
+                    result.actual
+                )
+
+        return false, result
+    end
+
+    return true, result
+end
+
+function E.AddVerified(inventory, classId, quantity, health)
+    local result = {
+        operation = "add",
+        classId = classId,
+        requested = quantity,
+
+        before = nil,
+        after = nil,
+        actual = nil,
+
+        health = health,
+        engineResult = nil,
+        reason = nil,
+
+        inventoryWrites = 0,
+    }
+
+    if type(classId) ~= "string"
+        or classId == ""
+    then
+        result.reason =
+            "class ID is missing"
+
+        return false, result
+    end
+
+    quantity = tonumber(quantity)
+
+    if not isPositiveInteger(quantity) then
+        result.reason =
+            "quantity must be a positive integer"
+
+        return false, result
+    end
+
+    result.requested = quantity
+
+    health = tonumber(health)
+
+    if health == nil then
+        health = 1.0
+    end
+
+    if not isFiniteNumber(health)
+        or health <= 0
+    then
+        result.reason =
+            "health must be a positive number"
+
+        return false, result
+    end
+
+    result.health = health
+
+    if not inventory then
+        result.reason =
+            "inventory unavailable"
+
+        return false, result
+    end
+
+    if type(inventory.CreateItem)
+        ~= "function"
+    then
+        result.reason =
+            "CreateItem unavailable"
+
+        return false, result
+    end
+
+    local beforeOk,
+        before,
+        beforeReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not beforeOk then
+        result.reason = beforeReason
+
+        return false, result
+    end
+
+    result.before = before
+    result.inventoryWrites = 1
+
+    local callOk, engineResult =
+        pcall(
+            inventory.CreateItem,
+            inventory,
+            tostring(classId),
+            health,
+            quantity
+        )
+
+    result.engineResult = engineResult
+
+    local afterOk,
+        after,
+        afterReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not afterOk then
+        result.reason =
+            "post-add count failed: "
+            .. tostring(afterReason)
+
+        if not callOk then
+            result.reason =
+                result.reason
+                .. "; engine error: "
+                .. tostring(engineResult)
+        end
+
+        return false, result
+    end
+
+    result.after = after
+    result.actual = after - before
+
+    if not callOk then
+        result.reason =
+            "CreateItem failed: "
+            .. tostring(engineResult)
+
+        return false, result
+    end
+
+    if result.actual ~= quantity then
+        result.reason =
+            ("add quantity mismatch: requested=%d actual=%d")
+                :format(
+                    quantity,
+                    result.actual
+                )
+
+        return false, result
+    end
+
+    return true, result
+end
+
+local function logMutationResult(
+    label,
+    success,
+    result
+)
+    txLog(
+        ("%s success=%s id=%s requested=%s before=%s after=%s actual=%s writes=%d engineResult=%s reason=%s")
+            :format(
+                tostring(label),
+                tostring(success),
+                tostring(result.classId),
+                tostring(result.requested),
+                tostring(result.before),
+                tostring(result.after),
+                tostring(result.actual),
+                tonumber(
+                    result.inventoryWrites
+                ) or 0,
+                tostring(result.engineResult),
+                tostring(result.reason)
+            )
+    )
+end
+
+local function restoreClassCount(
+    inventory,
+    classId,
+    targetCount
+)
+    local countOk,
+        currentCount,
+        countReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not countOk then
+        return false, nil, countReason
+    end
+
+    if currentCount == targetCount then
+        return true, nil, nil
+    end
+
+    local mutationOk
+    local mutationResult
+
+    if currentCount < targetCount then
+        mutationOk, mutationResult =
+            E.AddVerified(
+                inventory,
+                classId,
+                targetCount - currentCount,
+                1.0
+            )
+    else
+        mutationOk, mutationResult =
+            E.RemoveVerified(
+                inventory,
+                classId,
+                currentCount - targetCount
+            )
+    end
+
+    local finalOk,
+        finalCount,
+        finalReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not finalOk then
+        return false,
+            mutationResult,
+            finalReason
+    end
+
+    if finalCount ~= targetCount then
+        return false,
+            mutationResult,
+            ("compensation mismatch: target=%d final=%d helperSuccess=%s")
+                :format(
+                    targetCount,
+                    finalCount,
+                    tostring(mutationOk)
+                )
+    end
+
+    return true, mutationResult, nil
+end
+
+function E.TestInventoryRoundTrip(classId, quantity, confirmation)
+    if confirmation ~= "TEST" then
+        txLog(
+            "Inventory round-trip aborted: explicit TEST confirmation required"
+        )
+
+        return false
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        txLog(
+            "Inventory round-trip aborted: DryRun must be false"
+        )
+
+        return false
+    end
+
+    if type(WB.BuildPotionIndex) == "function" then
+        WB.BuildPotionIndex()
+    end
+
+    local potion =
+        type(WB.GetTrackedPotion) == "function"
+        and WB.GetTrackedPotion(classId)
+        or nil
+
+    if not potion then
+        txLog(
+            "Inventory round-trip aborted: class ID is not a tracked potion"
+        )
+
+        return false
+    end
+
+    quantity = tonumber(quantity)
+
+    if not isPositiveInteger(quantity) then
+        txLog(
+            "Inventory round-trip aborted: quantity must be a positive integer"
+        )
+
+        return false
+    end
+
+    local U = WB.Util
+
+    local playerEntity =
+        U
+        and type(U.Player) == "function"
+        and U.Player()
+        or nil
+
+    local inventory =
+        getInventory(playerEntity)
+
+    if not inventory then
+        txLog(
+            "Inventory round-trip aborted: player inventory unavailable"
+        )
+
+        return false
+    end
+
+    local initialOk,
+        initialCount,
+        initialReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not initialOk then
+        txLog(
+            "Inventory round-trip aborted: "
+            .. tostring(initialReason)
+        )
+
+        return false
+    end
+
+    txLog(
+        ("Inventory round-trip BEGIN family=%s tier=%s id=%s quantity=%d initial=%d")
+            :format(
+                tostring(potion.family),
+                tostring(
+                    potion.label
+                    or potion.tier
+                    or "?"
+                ),
+                tostring(classId),
+                quantity,
+                initialCount
+            )
+    )
+
+    local removeOk, removeResult =
+        E.RemoveVerified(
+            inventory,
+            classId,
+            quantity
+        )
+
+    logMutationResult(
+        "REMOVE",
+        removeOk,
+        removeResult
+    )
+
+    if not removeOk then
+        local restored,
+            compensationResult,
+            compensationReason =
+            restoreClassCount(
+                inventory,
+                classId,
+                initialCount
+            )
+
+        if compensationResult then
+            logMutationResult(
+                "COMPENSATE",
+                restored,
+                compensationResult
+            )
+        end
+
+        txLog(
+            ("Inventory round-trip FAILED during remove compensation=%s reason=%s")
+                :format(
+                    tostring(restored),
+                    tostring(
+                        compensationReason
+                        or removeResult.reason
+                    )
+                )
+        )
+
+        return false
+    end
+
+    local addOk, addResult =
+        E.AddVerified(
+            inventory,
+            classId,
+            quantity,
+            1.0
+        )
+
+    logMutationResult(
+        "ADD",
+        addOk,
+        addResult
+    )
+
+    if not addOk then
+        local restored,
+            compensationResult,
+            compensationReason =
+            restoreClassCount(
+                inventory,
+                classId,
+                initialCount
+            )
+
+        if compensationResult then
+            logMutationResult(
+                "COMPENSATE",
+                restored,
+                compensationResult
+            )
+        end
+
+        txLog(
+            ("Inventory round-trip FAILED during add compensation=%s reason=%s")
+                :format(
+                    tostring(restored),
+                    tostring(
+                        compensationReason
+                        or addResult.reason
+                    )
+                )
+        )
+
+        return false
+    end
+
+    local finalOk,
+        finalCount,
+        finalReason =
+        getInventoryCount(
+            inventory,
+            classId
+        )
+
+    if not finalOk
+        or finalCount ~= initialCount
+    then
+        local restored,
+            compensationResult,
+            compensationReason =
+            restoreClassCount(
+                inventory,
+                classId,
+                initialCount
+            )
+
+        if compensationResult then
+            logMutationResult(
+                "COMPENSATE",
+                restored,
+                compensationResult
+            )
+        end
+
+        txLog(
+            ("Inventory round-trip FAILED final verification initial=%d final=%s compensation=%s reason=%s")
+                :format(
+                    initialCount,
+                    tostring(finalCount),
+                    tostring(restored),
+                    tostring(
+                        compensationReason
+                        or finalReason
+                    )
+                )
+        )
+
+        return false
+    end
+
+    txLog(
+        ("Inventory round-trip OK id=%s initial=%d final=%d inventoryWrites=2 cohortWrites=0")
+            :format(
+                tostring(classId),
+                initialCount,
+                finalCount
+            )
+    )
+
+    return true
 end
 
 function E.BuildPlayerTransaction()

@@ -50,4 +50,10 @@ System.AddCCommand("wb_age_preview", "WitheringBrews_Cmd_AgingPreview()", "WB: p
 System.AddCCommand("wb_age_validate_rules", "WitheringBrews_Cmd_AgingValidateRules()", "WB: validate configured aging rules (read-only)")
 System.AddCCommand("wb_age_tx_preview", "WitheringBrews_Cmd_AgingTxPreview()", "WB: construct player aging transaction (read-only)")
 
+System.AddCCommand(
+    "wb_age_inv_roundtrip",
+    "WitheringBrews_Cmd_AgingInventoryRoundTrip(%%)",
+    "WB: verified remove/add inventory round-trip <classId> <qty> TEST"
+)
+
 WitheringBrews.Handshake(50, 100)

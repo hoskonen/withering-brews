@@ -286,6 +286,29 @@ function WitheringBrews_Cmd_AgingTxPreview()
     execution.PreviewPlayerTransaction()
 end
 
+function WitheringBrews_Cmd_AgingInventoryRoundTrip(classId, quantity,confirmation)
+    local execution = WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestInventoryRoundTrip
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging inventory round-trip unavailable"
+        )
+
+        return
+    end
+
+    execution.TestInventoryRoundTrip(
+        classId,
+        quantity,
+        confirmation
+    )
+end
+
 function WitheringBrews_Cmd_AgingValidateRules()
     local aging = WB.Aging
 
