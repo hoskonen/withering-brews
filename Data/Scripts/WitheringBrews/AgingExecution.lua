@@ -2640,7 +2640,7 @@ function E.BuildPlayerTransaction()
     return transaction
 end
 
-function E.ApplyPlayerTransaction(confirmation)
+function E.ApplyPlayerTransaction(confirmation, testFailurePoint)
     local summary = {
         success = false,
         failureReason = nil,
@@ -2658,7 +2658,28 @@ function E.ApplyPlayerTransaction(confirmation)
         compensationInventoryWrites = 0,
         compensationCohortWrites = 0,
         compensationSucceeded = false,
+
+        testFailurePoint =
+            testFailurePoint,
     }
+
+    if testFailurePoint ~= nil
+        and testFailurePoint
+            ~= "after_removals"
+        and testFailurePoint
+            ~= "after_additions"
+        and testFailurePoint
+            ~= "after_first_cohort_write"
+        and testFailurePoint
+            ~= "after_cohort_writes"
+    then
+        txLog(
+            "Apply aborted: unknown test failure point: "
+            .. tostring(testFailurePoint)
+        )
+
+        return false, summary
+    end
 
     if confirmation ~= "APPLY" then
         txLog(
@@ -2833,6 +2854,25 @@ function E.ApplyPlayerTransaction(confirmation)
         end
     end
 
+    -- Development-only compensation test.
+    -- Normal apply calls never provide testFailurePoint.
+    if not failureReason
+        and testFailurePoint
+            == "after_removals"
+    then
+        if summary.removalOperations == 0 then
+            failureReason =
+                "TEST INJECTION: removal phase performed no operations"
+        else
+            txLog(
+                "TEST INJECTION: forcing failure after removal phase"
+            )
+
+            failureReason =
+                "TEST INJECTION: forced failure after removal phase"
+        end
+    end
+
     -- Phase 2: add every target quantity.
     if not failureReason then
         for _, classId in ipairs(
@@ -2884,6 +2924,23 @@ function E.ApplyPlayerTransaction(confirmation)
                             )
                 end
             end
+        end
+    end
+
+    if not failureReason
+        and testFailurePoint
+            == "after_additions"
+    then
+        if summary.additionOperations == 0 then
+            failureReason =
+                "TEST INJECTION: addition phase performed no operations"
+        else
+            txLog(
+                "TEST INJECTION: forcing failure after addition phase"
+            )
+
+            failureReason =
+                "TEST INJECTION: forced failure after addition phase"
         end
     end
 
@@ -2967,7 +3024,33 @@ function E.ApplyPlayerTransaction(confirmation)
                                 writeResult.reason
                             )
                         )
+            elseif testFailurePoint
+                == "after_first_cohort_write"
+            then
+                txLog(
+                    "TEST INJECTION: forcing failure after first cohort write"
+                )
+
+                failureReason =
+                    "TEST INJECTION: forced failure after first cohort write"
             end
+        end
+    end
+
+        if not failureReason
+        and testFailurePoint
+            == "after_cohort_writes"
+    then
+        if summary.cohortOperations == 0 then
+            failureReason =
+                "TEST INJECTION: cohort phase performed no operations"
+        else
+            txLog(
+                "TEST INJECTION: forcing failure after all cohort writes"
+            )
+
+            failureReason =
+                "TEST INJECTION: forced failure after all cohort writes"
         end
     end
 
@@ -3252,6 +3335,90 @@ function E.ApplyPlayerTransaction(confirmation)
     )
 
     return true, summary
+end
+
+function E.TestCompensationAfterRemovals(confirmation)
+    if confirmation
+        ~= "TEST_AFTER_REMOVALS"
+    then
+        txLog(
+            "Compensation test aborted: explicit TEST_AFTER_REMOVALS confirmation required"
+        )
+
+        txLog(
+            "Use: wb_age_tx_test_after_removals TEST_AFTER_REMOVALS"
+        )
+
+        return false
+    end
+
+    return E.ApplyPlayerTransaction(
+        "APPLY",
+        "after_removals"
+    )
+end
+
+function E.TestCompensationAfterAdditions(confirmation)
+    if confirmation
+        ~= "TEST_AFTER_ADDITIONS"
+    then
+        txLog(
+            "Compensation test aborted: explicit TEST_AFTER_ADDITIONS confirmation required"
+        )
+
+        txLog(
+            "Use: wb_age_tx_test_after_additions TEST_AFTER_ADDITIONS"
+        )
+
+        return false
+    end
+
+    return E.ApplyPlayerTransaction(
+        "APPLY",
+        "after_additions"
+    )
+end
+
+function E.TestCompensationAfterFirstCohortWrite(confirmation)
+    if confirmation
+        ~= "TEST_AFTER_COHORT_WRITE"
+    then
+        txLog(
+            "Compensation test aborted: explicit TEST_AFTER_COHORT_WRITE confirmation required"
+        )
+
+        txLog(
+            "Use: wb_age_tx_test_after_cohort_write TEST_AFTER_COHORT_WRITE"
+        )
+
+        return false
+    end
+
+    return E.ApplyPlayerTransaction(
+        "APPLY",
+        "after_first_cohort_write"
+    )
+end
+
+function E.TestCompensationAfterCohortWrites(confirmation)
+    if confirmation
+        ~= "TEST_AFTER_COHORT_WRITES"
+    then
+        txLog(
+            "Compensation test aborted: explicit TEST_AFTER_COHORT_WRITES confirmation required"
+        )
+
+        txLog(
+            "Use: wb_age_tx_test_after_cohort_writes TEST_AFTER_COHORT_WRITES"
+        )
+
+        return false
+    end
+
+    return E.ApplyPlayerTransaction(
+        "APPLY",
+        "after_cohort_writes"
+    )
 end
 
 function E.PreviewPlayerTransaction()

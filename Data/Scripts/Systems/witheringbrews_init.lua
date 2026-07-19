@@ -68,4 +68,28 @@ System.AddCCommand(
     "WB: apply guarded player aging transaction APPLY"
 )
 
+System.AddCCommand(
+    "wb_age_tx_test_after_removals",
+    "WitheringBrews_Cmd_AgingTxTestAfterRemovals(%1)",
+    "WB dev: force failure after aging removals and test compensation"
+)
+
+System.AddCCommand(
+    "wb_age_tx_test_after_additions",
+    "WitheringBrews_Cmd_AgingTxTestAfterAdditions(%1)",
+    "WB dev: force failure after aging additions and test compensation"
+)
+
+System.AddCCommand(
+    "wb_age_tx_test_after_cohort_write",
+    "WitheringBrews_Cmd_AgingTxTestAfterCohortWrite(%1)",
+    "WB dev: fail after first aging cohort write and test compensation"
+)
+
+System.AddCCommand(
+    "wb_age_tx_test_after_cohort_writes",
+    "WitheringBrews_Cmd_AgingTxTestAfterCohortWrites(%1)",
+    "WB dev: fail after all aging cohort writes and test compensation"
+)
+
 WitheringBrews.Handshake(50, 100)

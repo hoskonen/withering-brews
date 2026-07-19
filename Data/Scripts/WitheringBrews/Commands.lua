@@ -414,3 +414,90 @@ function WitheringBrews_Cmd_AgingTxApply(confirmation)
     )
 end
 
+function WitheringBrews_Cmd_AgingTxTestAfterRemovals(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestCompensationAfterRemovals
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging compensation test unavailable"
+        )
+
+        return false
+    end
+
+    return execution.TestCompensationAfterRemovals(
+        confirmation
+    )
+end
+
+function WitheringBrews_Cmd_AgingTxTestAfterAdditions(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestCompensationAfterAdditions
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging compensation test unavailable"
+        )
+
+        return false
+    end
+
+    return execution.TestCompensationAfterAdditions(
+        confirmation
+    )
+end
+
+function WitheringBrews_Cmd_AgingTxTestAfterCohortWrite(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestCompensationAfterFirstCohortWrite
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging compensation test unavailable"
+        )
+
+        return false
+    end
+
+    return execution.TestCompensationAfterFirstCohortWrite(
+        confirmation
+    )
+end
+
+function WitheringBrews_Cmd_AgingTxTestAfterCohortWrites(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.TestCompensationAfterCohortWrites
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Aging compensation test unavailable"
+        )
+
+        return false
+    end
+
+    return execution.TestCompensationAfterCohortWrites(
+        confirmation
+    )
+end
