@@ -13,7 +13,6 @@ Script.ReloadScript("Scripts/WitheringBrews/Core.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Events.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Cohorts.lua")
 Script.ReloadScript("Scripts/WitheringBrews/AgingExecution.lua")
-Script.ReloadScript("Scripts/WitheringBrews/AgingFixtures.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Dev.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Commands.lua")
 
@@ -67,54 +66,6 @@ System.AddCCommand(
     "wb_age_tx_apply",
     "WitheringBrews_Cmd_AgingTxApply(%1)",
     "WB: apply guarded player aging transaction APPLY"
-)
-
-System.AddCCommand(
-    "wb_age_tx_test_after_removals",
-    "WitheringBrews_Cmd_AgingTxTestAfterRemovals(%1)",
-    "WB dev: force failure after aging removals and test compensation"
-)
-
-System.AddCCommand(
-    "wb_age_tx_test_after_additions",
-    "WitheringBrews_Cmd_AgingTxTestAfterAdditions(%1)",
-    "WB dev: force failure after aging additions and test compensation"
-)
-
-System.AddCCommand(
-    "wb_age_tx_test_after_cohort_write",
-    "WitheringBrews_Cmd_AgingTxTestAfterCohortWrite(%1)",
-    "WB dev: fail after first aging cohort write and test compensation"
-)
-
-System.AddCCommand(
-    "wb_age_tx_test_after_cohort_writes",
-    "WitheringBrews_Cmd_AgingTxTestAfterCohortWrites(%1)",
-    "WB dev: fail after all aging cohort writes and test compensation"
-)
-
-System.AddCCommand(
-    "wb_age_fixture_multi",
-    "WitheringBrews_Cmd_InstallMultiTransitionFixture(%1)",
-    "WB dev: install guarded Marigold IV-to-III and III-to-II fixture"
-)
-
-System.AddCCommand(
-    "wb_age_fixture_compaction",
-    "WitheringBrews_Cmd_InstallCompactionFixture(%1)",
-    "WB dev: install guarded existing-target and exact-compaction fixture"
-)
-
-System.AddCCommand(
-    "wb_age_fixture_terminal_keep",
-    "WitheringBrews_Cmd_InstallTerminalKeepFixture(%1)",
-    "WB dev: install guarded terminal Quality I keep fixture"
-)
-
-System.AddCCommand(
-    "wb_age_fixture_terminal_overflow",
-    "WitheringBrews_Cmd_InstallTerminalOverflowFixture(%1)",
-    "WB dev: install guarded Quality II overflow-to-I fixture"
 )
 
 WitheringBrews.Handshake(50, 100)
