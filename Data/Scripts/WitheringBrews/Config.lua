@@ -8,6 +8,9 @@ C.Version                 = C.Version or "0.0.1-dev"
 -- flags
 C.DryRun                  = (C.DryRun ~= false) -- default true
 
+-- MCM integration test only; not yet connected to gameplay behavior.
+C.Enabled                 = (C.Enabled ~= false) -- default true
+
 C.TrackMode               = "whitelist"         -- families or whitelist
 
 -- bootstrap

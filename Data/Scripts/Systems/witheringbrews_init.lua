@@ -4,6 +4,7 @@ WitheringBrews = WitheringBrews or {}
 System.LogAlways("[WitheringBrews] init loading")
 
 Script.ReloadScript("Scripts/WitheringBrews/Config.lua")
+Script.ReloadScript("Scripts/WitheringBrews/ModMenu.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Potions.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Aging.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Debug.lua")
