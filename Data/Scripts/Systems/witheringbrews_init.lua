@@ -92,4 +92,16 @@ System.AddCCommand(
     "WB dev: fail after all aging cohort writes and test compensation"
 )
 
+System.AddCCommand(
+    "wb_age_fixture_multi",
+    "WitheringBrews_Cmd_InstallMultiTransitionFixture(%1)",
+    "WB dev: install guarded Marigold IV-to-III and III-to-II fixture"
+)
+
+System.AddCCommand(
+    "wb_age_fixture_compaction",
+    "WitheringBrews_Cmd_InstallCompactionFixture(%1)",
+    "WB dev: install guarded existing-target and exact-compaction fixture"
+)
+
 WitheringBrews.Handshake(50, 100)

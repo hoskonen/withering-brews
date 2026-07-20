@@ -501,3 +501,47 @@ function WitheringBrews_Cmd_AgingTxTestAfterCohortWrites(confirmation)
         confirmation
     )
 end
+
+function WitheringBrews_Cmd_InstallMultiTransitionFixture(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.InstallMultiTransitionFixture
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Multi-transition fixture installer unavailable"
+        )
+
+        return false
+    end
+
+    return execution.InstallMultiTransitionFixture(
+        confirmation
+    )
+end
+
+function WitheringBrews_Cmd_InstallCompactionFixture(confirmation)
+    local execution =
+        WB.AgingExecution
+
+    if not (
+        execution
+        and type(
+            execution.InstallCompactionFixture
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Compaction fixture installer unavailable"
+        )
+
+        return false
+    end
+
+    return execution.InstallCompactionFixture(
+        confirmation
+    )
+end

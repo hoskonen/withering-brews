@@ -3421,6 +3421,1316 @@ function E.TestCompensationAfterCohortWrites(confirmation)
     )
 end
 
+function E.InstallMultiTransitionFixture(confirmation)
+    local summary = {
+        success = false,
+        failureReason = nil,
+
+        inventoryWrites = 0,
+        cohortWrites = 0,
+
+        compensationAttempted = false,
+        compensationInventoryWrites = 0,
+        compensationCohortWrites = 0,
+        compensationSucceeded = false,
+    }
+
+    if confirmation
+        ~= "INSTALL_MULTI_TRANSITION"
+    then
+        txLog(
+            "Fixture install aborted: explicit INSTALL_MULTI_TRANSITION confirmation required"
+        )
+
+        return false, summary
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        txLog(
+            "Fixture install aborted: DryRun must be false"
+        )
+
+        return false, summary
+    end
+
+    local marigoldII =
+        "761f9e84-e07b-4b4b-9425-7681898abccd"
+
+    local marigoldIII =
+        "b4e0af8c-3ed7-40ed-8537-7772489832c8"
+
+    local marigoldIV =
+        "c7022225-70b4-4bde-afe0-1d42763a2ecd"
+
+    local fixtureSource =
+        "fixture:multi_transition"
+
+    local secondsPerDay = 86400
+
+    local baseline =
+        E.BuildPlayerTransaction()
+
+    if not baseline.valid then
+        txLog(
+            "Fixture install aborted: baseline transaction is invalid"
+        )
+
+        for _, reason in ipairs(
+            baseline.blockedReasons
+        ) do
+            txLog(
+                "  BLOCKED " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    if #baseline.affectedClassIds ~= 0 then
+        txLog(
+            ("Fixture install aborted: baseline transaction has affectedIds=%d; expected 0")
+                :format(
+                    #baseline.affectedClassIds
+                )
+        )
+
+        return false, summary
+    end
+
+    local requiredIds = {
+        marigoldII,
+        marigoldIII,
+        marigoldIV,
+    }
+
+    for _, classId in ipairs(requiredIds) do
+        if baseline.inventoryBefore[classId]
+            == nil
+        then
+            txLog(
+                ("Fixture install aborted: Marigold ID is not configured: %s")
+                    :format(
+                        tostring(classId)
+                    )
+            )
+
+            return false, summary
+        end
+    end
+
+    local baselineII =
+        baseline.inventoryBefore[marigoldII]
+
+    local baselineIII =
+        baseline.inventoryBefore[marigoldIII]
+
+    local baselineIV =
+        baseline.inventoryBefore[marigoldIV]
+
+    if baselineII ~= 0
+        or baselineIII ~= 1
+        or baselineIV ~= 0
+    then
+        txLog(
+            ("Fixture install aborted: expected Marigold baseline II=0 III=1 IV=0; actual II=%d III=%d IV=%d")
+                :format(
+                    baselineII,
+                    baselineIII,
+                    baselineIV
+                )
+        )
+
+        return false, summary
+    end
+
+    local listII =
+        baseline.cohortListsBefore[
+            marigoldII
+        ]
+
+    local listIII =
+        baseline.cohortListsBefore[
+            marigoldIII
+        ]
+
+    local listIV =
+        baseline.cohortListsBefore[
+            marigoldIV
+        ]
+
+    if #listII ~= 0
+        or #listIII ~= 1
+        or #listIV ~= 0
+        or listIII[1].qty ~= 1
+    then
+        txLog(
+            ("Fixture install aborted: expected cohort rows II=0 III=1x1 IV=0; actual II=%d III=%d IV=%d")
+                :format(
+                    #listII,
+                    #listIII,
+                    #listIV
+                )
+        )
+
+        return false, summary
+    end
+
+    local currentTime =
+        baseline.currentTime
+
+    local createdAtIV =
+        currentTime
+        - (4.5 * secondsPerDay)
+
+    local createdAtIII =
+        currentTime
+        - (3.5 * secondsPerDay)
+
+    local targetCreatedAt =
+        currentTime
+        - (0.5 * secondsPerDay)
+
+    if createdAtIV < 0
+        or createdAtIII < 0
+    then
+        txLog(
+            "Fixture install aborted: world time is too early for fixture timestamps"
+        )
+
+        return false, summary
+    end
+
+    local precheckOk, precheck =
+        E.RecheckPreconditions(
+            baseline
+        )
+
+    txLog(
+        ("Fixture precondition recheck: valid=%s checkedIds=%d inventoryChecks=%d cohortChecks=%d writes=0")
+            :format(
+                tostring(precheckOk),
+                precheck.checkedIds,
+                precheck.inventoryChecks,
+                precheck.cohortChecks
+            )
+    )
+
+    if not precheckOk then
+        txLog(
+            "Fixture install aborted: precondition recheck failed"
+        )
+
+        for _, reason in ipairs(
+            precheck.reasons
+        ) do
+            txLog(
+                "  " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    local U = WB.Util
+
+    local playerEntity =
+        U
+        and type(U.Player) == "function"
+        and U.Player()
+        or nil
+
+    local inventory =
+        getInventory(playerEntity)
+
+    if not inventory then
+        txLog(
+            "Fixture install aborted: player inventory unavailable"
+        )
+
+        return false, summary
+    end
+
+    local expectedInventory =
+        copyValue(
+            baseline.inventoryBefore
+        )
+
+    expectedInventory[marigoldIV] = 1
+
+    local expectedCohorts =
+        copyValue(
+            baseline.cohortListsBefore
+        )
+
+    expectedCohorts[marigoldIII] = {
+        {
+            qty = 1,
+            created_at = createdAtIII,
+            source = fixtureSource,
+        },
+    }
+
+    expectedCohorts[marigoldIV] = {
+        {
+            qty = 1,
+            created_at = createdAtIV,
+            source = fixtureSource,
+        },
+    }
+
+    local touchedCohortIds = {}
+    local failureReason = nil
+
+    local addOk, addResult =
+        E.AddVerified(
+            inventory,
+            marigoldIV,
+            1,
+            1.0
+        )
+
+    summary.inventoryWrites =
+        summary.inventoryWrites
+        + (
+            addResult.inventoryWrites
+            or 0
+        )
+
+    logMutationResult(
+        "FIXTURE ADD",
+        addOk,
+        addResult
+    )
+
+    if not addOk then
+        failureReason =
+            "Marigold IV inventory addition failed: "
+            .. tostring(addResult.reason)
+    end
+
+    local cohortWriteIds = {
+        marigoldIII,
+        marigoldIV,
+    }
+
+    if not failureReason then
+        for _, classId in ipairs(
+            cohortWriteIds
+        ) do
+            -- Include before attempting the write because
+            -- a failed call may still mutate storage.
+            touchedCohortIds[
+                #touchedCohortIds + 1
+            ] = classId
+
+            local writeOk, writeResult =
+                E.WriteCohortListVerified(
+                    classId,
+                    expectedCohorts[classId]
+                )
+
+            summary.cohortWrites =
+                summary.cohortWrites
+                + (
+                    writeResult.cohortWrites
+                    or 0
+                )
+
+            logCohortWriteResult(
+                "FIXTURE COHORT WRITE",
+                writeOk,
+                writeResult
+            )
+
+            if not writeOk then
+                failureReason =
+                    ("fixture cohort write failed id=%s: %s")
+                        :format(
+                            tostring(classId),
+                            tostring(
+                                writeResult.reason
+                            )
+                        )
+
+                break
+            end
+        end
+    end
+
+    if not failureReason then
+        local inventoryOk,
+            inventoryVerification =
+            E.VerifyInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                expectedInventory
+            )
+
+        txLog(
+            ("Fixture inventory verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(inventoryOk),
+                    inventoryVerification.checkedIds
+                )
+        )
+
+        if not inventoryOk then
+            failureReason =
+                "fixture inventory verification failed"
+
+            for _, reason in ipairs(
+                inventoryVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    if not failureReason then
+        local cohortsOk,
+            cohortVerification =
+            E.VerifyCohortState(
+                baseline.configuredClassIds,
+                expectedCohorts
+            )
+
+        txLog(
+            ("Fixture cohort verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(cohortsOk),
+                    cohortVerification.checkedIds
+                )
+        )
+
+        if not cohortsOk then
+            failureReason =
+                "fixture cohort verification failed"
+
+            for _, reason in ipairs(
+                cohortVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    if not failureReason then
+        if type(WB.CohortsValidatePlayer)
+            ~= "function"
+        then
+            failureReason =
+                "cohort validator unavailable"
+        else
+            local callOk,
+                validatorOk,
+                validatorSummary =
+                pcall(
+                    WB.CohortsValidatePlayer
+                )
+
+            if not callOk then
+                failureReason =
+                    "cohort validator raised an error: "
+                    .. tostring(validatorOk)
+            elseif validatorOk ~= true
+                or type(validatorSummary)
+                    ~= "table"
+            then
+                failureReason =
+                    "cohort validator failed"
+            else
+                local validatorClean =
+                    (validatorSummary.missingQty or 0)
+                        == 0
+                    and (
+                        validatorSummary.excessQty
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.invalidRows
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.invalidLists
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.futureRows
+                        or 0
+                    ) == 0
+                    and (
+                        validatorSummary.preEpochRows
+                        or 0
+                    ) == 0
+
+                if not validatorClean then
+                    failureReason =
+                        "cohort validator reported fixture inconsistencies"
+                end
+            end
+        end
+    end
+
+    if not failureReason then
+        local fixtureTransaction =
+            E.BuildPlayerTransaction()
+
+        if not fixtureTransaction.valid then
+            failureReason =
+                "constructed fixture transaction is invalid"
+
+            for _, reason in ipairs(
+                fixtureTransaction.blockedReasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        elseif fixtureTransaction.summary.downgradeRows
+            ~= 2
+        then
+            failureReason =
+                ("fixture expected downgradeRows=2; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.downgradeRows
+                    )
+        elseif fixtureTransaction.summary.removals
+            ~= 2
+        then
+            failureReason =
+                ("fixture expected removals=2; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.removals
+                    )
+        elseif fixtureTransaction.summary.additions
+            ~= 2
+        then
+            failureReason =
+                ("fixture expected additions=2; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.additions
+                    )
+        elseif #fixtureTransaction.affectedClassIds
+            ~= 3
+        then
+            failureReason =
+                ("fixture expected affectedIds=3; actual=%d")
+                    :format(
+                        #fixtureTransaction.affectedClassIds
+                    )
+        elseif (
+            fixtureTransaction.removalsByClassId[
+                marigoldIII
+            ] or 0
+        ) ~= 1
+            or (
+                fixtureTransaction.additionsByClassId[
+                    marigoldIII
+                ] or 0
+            ) ~= 1
+            or (
+                fixtureTransaction.netInventoryDeltaByClassId[
+                    marigoldIII
+                ] or 0
+            ) ~= 0
+        then
+            failureReason =
+                "fixture did not preserve explicit III removal/addition with net delta zero"
+        elseif (
+            fixtureTransaction.removalsByClassId[
+                marigoldIV
+            ] or 0
+        ) ~= 1
+            or (
+                fixtureTransaction.additionsByClassId[
+                    marigoldII
+                ] or 0
+            ) ~= 1
+        then
+            failureReason =
+                "fixture IV removal or II addition differs from expected"
+        elseif not valuesEqual(
+            fixtureTransaction.cohortListsExpected[
+                marigoldII
+            ],
+            {
+                {
+                    qty = 1,
+                    created_at = targetCreatedAt,
+                    source = fixtureSource,
+                },
+            }
+        ) then
+            failureReason =
+                "fixture expected Quality II cohort is incorrect"
+        elseif not valuesEqual(
+            fixtureTransaction.cohortListsExpected[
+                marigoldIII
+            ],
+            {
+                {
+                    qty = 1,
+                    created_at = targetCreatedAt,
+                    source = fixtureSource,
+                },
+            }
+        ) then
+            failureReason =
+                "fixture expected Quality III cohort is incorrect"
+        elseif not valuesEqual(
+            fixtureTransaction.cohortListsExpected[
+                marigoldIV
+            ],
+            {}
+        ) then
+            failureReason =
+                "fixture expected Quality IV cohort is not empty"
+        end
+    end
+
+    if failureReason then
+        summary.failureReason =
+            failureReason
+
+        summary.compensationAttempted = true
+
+        txLog(
+            "Fixture install FAILED: "
+            .. tostring(failureReason)
+        )
+
+        local cohortRestoreOk = true
+
+        if #touchedCohortIds > 0 then
+            local restoreOk, restoreResult =
+                E.RestoreCohortState(
+                    touchedCohortIds,
+                    baseline.cohortListsBefore
+                )
+
+            cohortRestoreOk = restoreOk
+
+            summary.compensationCohortWrites =
+                restoreResult.cohortWrites
+
+            txLog(
+                ("Fixture cohort compensation: valid=%s ids=%d writes=%d")
+                    :format(
+                        tostring(restoreOk),
+                        #touchedCohortIds,
+                        restoreResult.cohortWrites
+                    )
+            )
+
+            for _, reason in ipairs(
+                restoreResult.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+
+        local inventoryRestoreOk,
+            inventoryRestoreResult =
+            E.RestoreInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                baseline.inventoryBefore
+            )
+
+        summary.compensationInventoryWrites =
+            inventoryRestoreResult.inventoryWrites
+
+        txLog(
+            ("Fixture inventory compensation: valid=%s writes=%d")
+                :format(
+                    tostring(inventoryRestoreOk),
+                    inventoryRestoreResult.inventoryWrites
+                )
+        )
+
+        for _, reason in ipairs(
+            inventoryRestoreResult.reasons
+        ) do
+            txLog(
+                "  " .. tostring(reason)
+            )
+        end
+
+        local cohortsBeforeOk =
+            E.VerifyCohortState(
+                baseline.configuredClassIds,
+                baseline.cohortListsBefore
+            )
+
+        local inventoryBeforeOk =
+            E.VerifyInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                baseline.inventoryBefore
+            )
+
+        summary.compensationSucceeded =
+            cohortRestoreOk
+            and inventoryRestoreOk
+            and cohortsBeforeOk
+            and inventoryBeforeOk
+
+        if summary.compensationSucceeded then
+            txLog(
+                "Fixture compensation verified: original state restored"
+            )
+        else
+            txLog(
+                "CRITICAL: FIXTURE COMPENSATION FAILED; inventory or cohort state may be inconsistent"
+            )
+        end
+
+        return false, summary
+    end
+
+    summary.success = true
+
+    txLog(
+        ("Fixture installed: valid=true affectedIds=3 downgradeRows=2 removals=2 additions=2 IIIremove=1 IIIadd=1 IIcreatedAt=%s IIIcreatedAt=%s writes inventory=%d cohorts=%d")
+            :format(
+                tostring(targetCreatedAt),
+                tostring(targetCreatedAt),
+                summary.inventoryWrites,
+                summary.cohortWrites
+            )
+    )
+
+    return true, summary
+end
+
+function E.InstallCompactionFixture(confirmation)
+    local summary = {
+        success = false,
+        failureReason = nil,
+
+        inventoryWrites = 0,
+        cohortWrites = 0,
+
+        compensationAttempted = false,
+        compensationInventoryWrites = 0,
+        compensationCohortWrites = 0,
+        compensationSucceeded = false,
+    }
+
+    if confirmation
+        ~= "INSTALL_COMPACTION"
+    then
+        txLog(
+            "Compaction fixture aborted: explicit INSTALL_COMPACTION confirmation required"
+        )
+
+        return false, summary
+    end
+
+    if not (
+        WB.Config
+        and WB.Config.DryRun == false
+    ) then
+        txLog(
+            "Compaction fixture aborted: DryRun must be false"
+        )
+
+        return false, summary
+    end
+
+    local marigoldII =
+        "761f9e84-e07b-4b4b-9425-7681898abccd"
+
+    local marigoldIII =
+        "b4e0af8c-3ed7-40ed-8537-7772489832c8"
+
+    local marigoldIV =
+        "c7022225-70b4-4bde-afe0-1d42763a2ecd"
+
+    local baseline =
+        E.BuildPlayerTransaction()
+
+    if not baseline.valid then
+        txLog(
+            "Compaction fixture aborted: baseline transaction is invalid"
+        )
+
+        for _, reason in ipairs(
+            baseline.blockedReasons
+        ) do
+            txLog(
+                "  BLOCKED " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    if #baseline.affectedClassIds ~= 0 then
+        txLog(
+            ("Compaction fixture aborted: baseline has affectedIds=%d; expected 0")
+                :format(
+                    #baseline.affectedClassIds
+                )
+        )
+
+        return false, summary
+    end
+
+    local baselineII =
+        baseline.inventoryBefore[
+            marigoldII
+        ]
+
+    local baselineIII =
+        baseline.inventoryBefore[
+            marigoldIII
+        ]
+
+    local baselineIV =
+        baseline.inventoryBefore[
+            marigoldIV
+        ]
+
+    if baselineII ~= 1
+        or baselineIII ~= 1
+        or baselineIV ~= 0
+    then
+        txLog(
+            ("Compaction fixture aborted: expected Marigold baseline II=1 III=1 IV=0; actual II=%s III=%s IV=%s")
+                :format(
+                    tostring(baselineII),
+                    tostring(baselineIII),
+                    tostring(baselineIV)
+                )
+        )
+
+        return false, summary
+    end
+
+    local listII =
+        baseline.cohortListsBefore[
+            marigoldII
+        ]
+
+    local listIII =
+        baseline.cohortListsBefore[
+            marigoldIII
+        ]
+
+    local listIV =
+        baseline.cohortListsBefore[
+            marigoldIV
+        ]
+
+    if #listII ~= 1
+        or #listIII ~= 1
+        or #listIV ~= 0
+        or listII[1].qty ~= 1
+        or listIII[1].qty ~= 1
+    then
+        txLog(
+            "Compaction fixture aborted: expected one II row, one III row and no IV rows"
+        )
+
+        return false, summary
+    end
+
+    if listII[1].created_at
+            ~= listIII[1].created_at
+        or listII[1].source
+            ~= listIII[1].source
+    then
+        txLog(
+            "Compaction fixture aborted: II and III baseline metadata differ"
+        )
+
+        return false, summary
+    end
+
+    local targetCreatedAt =
+        listII[1].created_at
+
+    local fixtureSource =
+        listII[1].source
+
+    -- Development water duration:
+    -- Quality III lasts exactly three days.
+    local sourceCreatedAt =
+        targetCreatedAt
+        - (3 * 86400)
+
+    if sourceCreatedAt < 0 then
+        txLog(
+            "Compaction fixture aborted: calculated III timestamp is negative"
+        )
+
+        return false, summary
+    end
+
+    local precheckOk, precheck =
+        E.RecheckPreconditions(
+            baseline
+        )
+
+    txLog(
+        ("Compaction fixture precheck: valid=%s checkedIds=%d inventoryChecks=%d cohortChecks=%d writes=0")
+            :format(
+                tostring(precheckOk),
+                precheck.checkedIds,
+                precheck.inventoryChecks,
+                precheck.cohortChecks
+            )
+    )
+
+    if not precheckOk then
+        txLog(
+            "Compaction fixture aborted: precondition recheck failed"
+        )
+
+        for _, reason in ipairs(
+            precheck.reasons
+        ) do
+            txLog(
+                "  " .. tostring(reason)
+            )
+        end
+
+        return false, summary
+    end
+
+    local U = WB.Util
+
+    local playerEntity =
+        U
+        and type(U.Player) == "function"
+        and U.Player()
+        or nil
+
+    local inventory =
+        getInventory(playerEntity)
+
+    if not inventory then
+        txLog(
+            "Compaction fixture aborted: player inventory unavailable"
+        )
+
+        return false, summary
+    end
+
+    local expectedInventory =
+        copyValue(
+            baseline.inventoryBefore
+        )
+
+    expectedInventory[marigoldIII] = 2
+
+    local expectedCohorts =
+        copyValue(
+            baseline.cohortListsBefore
+        )
+
+    expectedCohorts[marigoldIII] = {
+        {
+            qty = 1,
+            created_at = sourceCreatedAt,
+            source = fixtureSource,
+        },
+        {
+            qty = 1,
+            created_at = sourceCreatedAt,
+            source = fixtureSource,
+        },
+    }
+
+    local touchedCohortIds = {}
+    local failureReason = nil
+
+    local addOk, addResult =
+        E.AddVerified(
+            inventory,
+            marigoldIII,
+            1,
+            1.0
+        )
+
+    summary.inventoryWrites =
+        summary.inventoryWrites
+        + (
+            addResult.inventoryWrites
+            or 0
+        )
+
+    logMutationResult(
+        "COMPACTION FIXTURE ADD",
+        addOk,
+        addResult
+    )
+
+    if not addOk then
+        failureReason =
+            "Marigold III inventory addition failed: "
+            .. tostring(addResult.reason)
+    end
+
+    if not failureReason then
+        touchedCohortIds[1] =
+            marigoldIII
+
+        local writeOk, writeResult =
+            E.WriteCohortListVerified(
+                marigoldIII,
+                expectedCohorts[
+                    marigoldIII
+                ]
+            )
+
+        summary.cohortWrites =
+            summary.cohortWrites
+            + (
+                writeResult.cohortWrites
+                or 0
+            )
+
+        logCohortWriteResult(
+            "COMPACTION FIXTURE COHORT WRITE",
+            writeOk,
+            writeResult
+        )
+
+        if not writeOk then
+            failureReason =
+                "Marigold III cohort write failed: "
+                .. tostring(writeResult.reason)
+        end
+    end
+
+    if not failureReason then
+        local inventoryOk,
+            inventoryVerification =
+            E.VerifyInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                expectedInventory
+            )
+
+        txLog(
+            ("Compaction fixture inventory verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(inventoryOk),
+                    inventoryVerification.checkedIds
+                )
+        )
+
+        if not inventoryOk then
+            failureReason =
+                "compaction fixture inventory verification failed"
+
+            for _, reason in ipairs(
+                inventoryVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    if not failureReason then
+        local cohortsOk,
+            cohortVerification =
+            E.VerifyCohortState(
+                baseline.configuredClassIds,
+                expectedCohorts
+            )
+
+        txLog(
+            ("Compaction fixture cohort verification: valid=%s checkedIds=%d writes=0")
+                :format(
+                    tostring(cohortsOk),
+                    cohortVerification.checkedIds
+                )
+        )
+
+        if not cohortsOk then
+            failureReason =
+                "compaction fixture cohort verification failed"
+
+            for _, reason in ipairs(
+                cohortVerification.reasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        end
+    end
+
+    if not failureReason then
+        local callOk,
+            validatorOk,
+            validatorSummary =
+            pcall(
+                WB.CohortsValidatePlayer
+            )
+
+        if not callOk then
+            failureReason =
+                "cohort validator raised an error: "
+                .. tostring(validatorOk)
+        elseif validatorOk ~= true
+            or type(validatorSummary)
+                ~= "table"
+        then
+            failureReason =
+                "cohort validator failed"
+        else
+            local validatorClean =
+                (validatorSummary.missingQty or 0)
+                    == 0
+                and (
+                    validatorSummary.excessQty
+                    or 0
+                ) == 0
+                and (
+                    validatorSummary.invalidRows
+                    or 0
+                ) == 0
+                and (
+                    validatorSummary.invalidLists
+                    or 0
+                ) == 0
+                and (
+                    validatorSummary.futureRows
+                    or 0
+                ) == 0
+                and (
+                    validatorSummary.preEpochRows
+                    or 0
+                ) == 0
+
+            if not validatorClean then
+                failureReason =
+                    "cohort validator reported compaction fixture inconsistencies"
+            end
+        end
+    end
+
+    if not failureReason then
+        local fixtureTransaction =
+            E.BuildPlayerTransaction()
+
+        local expectedCompactedII = {
+            {
+                qty = 3,
+                created_at = targetCreatedAt,
+                source = fixtureSource,
+            },
+        }
+
+        if not fixtureTransaction.valid then
+            failureReason =
+                "constructed compaction transaction is invalid"
+
+            for _, reason in ipairs(
+                fixtureTransaction.blockedReasons
+            ) do
+                txLog(
+                    "  " .. tostring(reason)
+                )
+            end
+        elseif fixtureTransaction.summary.sourceRows
+            ~= 6
+        then
+            failureReason =
+                ("compaction fixture expected sourceRows=6; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.sourceRows
+                    )
+        elseif fixtureTransaction.summary.stableRows
+            ~= 4
+        then
+            failureReason =
+                ("compaction fixture expected stableRows=4; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.stableRows
+                    )
+        elseif fixtureTransaction.summary.downgradeRows
+            ~= 2
+        then
+            failureReason =
+                ("compaction fixture expected downgradeRows=2; actual=%d")
+                    :format(
+                        fixtureTransaction.summary.downgradeRows
+                    )
+        elseif fixtureTransaction.summary.removals
+            ~= 2
+            or fixtureTransaction.summary.additions
+                ~= 2
+        then
+            failureReason =
+                "compaction fixture expected two removals and two additions"
+        elseif #fixtureTransaction.affectedClassIds
+            ~= 2
+        then
+            failureReason =
+                ("compaction fixture expected affectedIds=2; actual=%d")
+                    :format(
+                        #fixtureTransaction.affectedClassIds
+                    )
+        elseif (
+            fixtureTransaction.removalsByClassId[
+                marigoldIII
+            ] or 0
+        ) ~= 2
+            or (
+                fixtureTransaction.additionsByClassId[
+                    marigoldII
+                ] or 0
+            ) ~= 2
+        then
+            failureReason =
+                "compaction fixture removal/addition quantities differ from expected"
+        elseif (
+            fixtureTransaction.netInventoryDeltaByClassId[
+                marigoldII
+            ] or 0
+        ) ~= 2
+            or (
+                fixtureTransaction.netInventoryDeltaByClassId[
+                    marigoldIII
+                ] or 0
+            ) ~= -2
+        then
+            failureReason =
+                "compaction fixture net inventory deltas differ from expected"
+        elseif not valuesEqual(
+            fixtureTransaction.cohortListsExpected[
+                marigoldII
+            ],
+            expectedCompactedII
+        ) then
+            failureReason =
+                "three II contributions did not compact into one qty=3 row"
+        elseif not valuesEqual(
+            fixtureTransaction.cohortListsExpected[
+                marigoldIII
+            ],
+            {}
+        ) then
+            failureReason =
+                "expected final Marigold III cohort list is not empty"
+        end
+    end
+
+    if failureReason then
+        summary.failureReason =
+            failureReason
+
+        summary.compensationAttempted = true
+
+        txLog(
+            "Compaction fixture FAILED: "
+            .. tostring(failureReason)
+        )
+
+        local cohortRestoreOk = true
+
+        if #touchedCohortIds > 0 then
+            local restoreOk, restoreResult =
+                E.RestoreCohortState(
+                    touchedCohortIds,
+                    baseline.cohortListsBefore
+                )
+
+            cohortRestoreOk = restoreOk
+
+            summary.compensationCohortWrites =
+                restoreResult.cohortWrites
+
+            txLog(
+                ("Compaction cohort compensation: valid=%s writes=%d")
+                    :format(
+                        tostring(restoreOk),
+                        restoreResult.cohortWrites
+                    )
+            )
+        end
+
+        local inventoryRestoreOk,
+            inventoryRestoreResult =
+            E.RestoreInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                baseline.inventoryBefore
+            )
+
+        summary.compensationInventoryWrites =
+            inventoryRestoreResult.inventoryWrites
+
+        txLog(
+            ("Compaction inventory compensation: valid=%s writes=%d")
+                :format(
+                    tostring(inventoryRestoreOk),
+                    inventoryRestoreResult.inventoryWrites
+                )
+        )
+
+        local cohortsBeforeOk =
+            E.VerifyCohortState(
+                baseline.configuredClassIds,
+                baseline.cohortListsBefore
+            )
+
+        local inventoryBeforeOk =
+            E.VerifyInventoryState(
+                inventory,
+                baseline.configuredClassIds,
+                baseline.inventoryBefore
+            )
+
+        summary.compensationSucceeded =
+            cohortRestoreOk
+            and inventoryRestoreOk
+            and cohortsBeforeOk
+            and inventoryBeforeOk
+
+        if summary.compensationSucceeded then
+            txLog(
+                "Compaction fixture compensation verified: original state restored"
+            )
+        else
+            txLog(
+                "CRITICAL: COMPACTION FIXTURE COMPENSATION FAILED"
+            )
+        end
+
+        return false, summary
+    end
+
+    summary.success = true
+
+    txLog(
+        ("Compaction fixture installed: valid=true sourceRows=6 stableRows=4 downgradeRows=2 affectedIds=2 removals=2 additions=2 expectedIIRows=1 expectedIIQty=3 targetCreatedAt=%s writes inventory=%d cohorts=%d")
+            :format(
+                tostring(targetCreatedAt),
+                summary.inventoryWrites,
+                summary.cohortWrites
+            )
+    )
+
+    return true, summary
+end
+
 function E.PreviewPlayerTransaction()
     local transaction =
         E.BuildPlayerTransaction()
