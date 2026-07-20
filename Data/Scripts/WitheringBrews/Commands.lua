@@ -545,3 +545,47 @@ function WitheringBrews_Cmd_InstallCompactionFixture(confirmation)
         confirmation
     )
 end
+
+function WitheringBrews_Cmd_InstallTerminalKeepFixture(confirmation)
+    local fixtures =
+        WB.AgingFixtures
+
+    if not (
+        fixtures
+        and type(
+            fixtures.InstallTerminalKeepFixture
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Terminal keep fixture unavailable"
+        )
+
+        return false
+    end
+
+    return fixtures.InstallTerminalKeepFixture(
+        confirmation
+    )
+end
+
+function WitheringBrews_Cmd_InstallTerminalOverflowFixture(confirmation)
+    local fixtures =
+        WB.AgingFixtures
+
+    if not (
+        fixtures
+        and type(
+            fixtures.InstallTerminalOverflowFixture
+        ) == "function"
+    ) then
+        System.LogAlways(
+            "[WitheringBrews] Terminal overflow fixture unavailable"
+        )
+
+        return false
+    end
+
+    return fixtures.InstallTerminalOverflowFixture(
+        confirmation
+    )
+end

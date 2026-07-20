@@ -13,8 +13,9 @@ Script.ReloadScript("Scripts/WitheringBrews/Core.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Events.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Cohorts.lua")
 Script.ReloadScript("Scripts/WitheringBrews/AgingExecution.lua")
+Script.ReloadScript("Scripts/WitheringBrews/AgingFixtures.lua")
 Script.ReloadScript("Scripts/WitheringBrews/Dev.lua")
-Script.ReloadScript("Scripts/WitheringBrews/Commands.lua") -- NEW: handlers centralized
+Script.ReloadScript("Scripts/WitheringBrews/Commands.lua")
 
 WitheringBrews.Events.BindAll()
 
@@ -102,6 +103,18 @@ System.AddCCommand(
     "wb_age_fixture_compaction",
     "WitheringBrews_Cmd_InstallCompactionFixture(%1)",
     "WB dev: install guarded existing-target and exact-compaction fixture"
+)
+
+System.AddCCommand(
+    "wb_age_fixture_terminal_keep",
+    "WitheringBrews_Cmd_InstallTerminalKeepFixture(%1)",
+    "WB dev: install guarded terminal Quality I keep fixture"
+)
+
+System.AddCCommand(
+    "wb_age_fixture_terminal_overflow",
+    "WitheringBrews_Cmd_InstallTerminalOverflowFixture(%1)",
+    "WB dev: install guarded Quality II overflow-to-I fixture"
 )
 
 WitheringBrews.Handshake(50, 100)
